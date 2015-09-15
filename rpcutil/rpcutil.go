@@ -66,8 +66,6 @@ type llCodecRequest struct {
 func (cr llCodecRequest) ReadRequest(args interface{}) error {
 	// After calling the underlying ReadRequest the args will be filled in
 	if err := cr.CodecRequest.ReadRequest(args); err != nil {
-		cr.kv["err"] = err
-		llog.Warn("jsonrpc could not parse request", cr.kv)
 		// err will already be a json2.Error in this specific case, we don't
 		// have to wrap it again
 		return err
@@ -75,8 +73,6 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 
 	if cr.c.ValidateInput {
 		if err := validator.Validate(args); err != nil {
-			cr.kv["err"] = err
-			llog.Warn("jsonrpc could not validate request", cr.kv)
 			return &json2.Error{
 				Code:    json2.E_BAD_PARAMS,
 				Message: err.Error(),
