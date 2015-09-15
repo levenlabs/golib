@@ -14,7 +14,7 @@ import (
 type TestRPC struct{}
 
 type TestArgs struct {
-	Foo int
+	Foo int `validate:"min=0"`
 }
 
 type TestRes struct {
@@ -89,4 +89,24 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
+
+	// Test validation, which ensures that Foo is >= 0
+	c = NewLLCodec()
+	c.ValidateInput = true
+	h = JSONRPC2Handler(c, TestRPC{})
+
+	// The normal test should still work
+	i = int(testutil.RandInt64())
+	args = TestArgs{i}
+	res = TestRes{}
+	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
+	assert.Equal(t, i, res.Bar)
+
+	// Anything under 0 should not validate
+	args = TestArgs{-1}
+	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
+	assert.Equal(t, &json2.Error{
+		Code: json2.E_BAD_PARAMS, Message: "Foo: less than min",
+	}, err)
+
 }

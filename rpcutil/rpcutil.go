@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 
+	"gopkg.in/validator.v2"
+
 	"github.com/gorilla/rpc/v2"
 	"github.com/gorilla/rpc/v2/json2"
 	"github.com/levenlabs/go-llog"
@@ -31,6 +33,10 @@ type LLCodec struct {
 	// actually be returned to the client, only a generic error message in their
 	// place
 	HideServerErrors bool
+
+	// If true the gopkg.in/validator.v2 package will be used to automatically
+	// validate inputs to calls
+	ValidateInput bool
 }
 
 // NewLLCodec returns an LLCodec, which is an implementation of rpc.Codec around
@@ -62,11 +68,23 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 	if err := cr.CodecRequest.ReadRequest(args); err != nil {
 		cr.kv["err"] = err
 		llog.Warn("jsonrpc could not parse request", cr.kv)
+		// err will already be a json2.Error in this specific case, we don't
+		// have to wrap it again
 		return err
 	}
 
-	method, _ := cr.CodecRequest.Method()
-	cr.kv["method"] = method
+	if cr.c.ValidateInput {
+		if err := validator.Validate(args); err != nil {
+			cr.kv["err"] = err
+			llog.Warn("jsonrpc could not validate request", cr.kv)
+			return &json2.Error{
+				Code:    json2.E_BAD_PARAMS,
+				Message: err.Error(),
+			}
+		}
+	}
+
+	cr.kv["method"], _ = cr.CodecRequest.Method()
 	var fn llog.LogFunc
 	if llog.GetLevel() == llog.DebugLevel {
 		cr.kv["args"] = fmt.Sprintf("%+v", args)
@@ -75,6 +93,7 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		fn = llog.Info
 	}
 	fn("jsonrpc incoming request", cr.kv)
+
 	return nil
 }
 
