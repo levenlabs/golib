@@ -27,8 +27,9 @@ func RequestKV(r *http.Request) llog.KV {
 type LLCodec struct {
 	c rpc.Codec
 
-	// If true any errors which the user of LLCodec hasn't defined will not
-	// actually be returned to the client, only a generic error message.
+	// If true any errors which are not user caused (error code < 1) will not
+	// actually be returned to the client, only a generic error message in their
+	// place
 	HideServerErrors bool
 }
 
