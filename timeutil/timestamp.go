@@ -8,16 +8,19 @@ import (
 
 // Credit to Gal Ben-Heim, from this post:
 // https://medium.com/coding-and-deploying-in-the-cloud/time-stamps-in-golang-abcaf581b72f
-// (although the tests were written by us)
+// (although the tests were written by us, and the Timestamp type is slightly
+// modified)
 
 // Timestamp is a wrapper around time.Time which adds methods to marshal and
 // unmarshal the value as a unix timestamp instead of a formatted string
-type Timestamp time.Time
+type Timestamp struct {
+	time.Time
+}
 
 // MarshalJSON returns the JSON representation of the Timestamp as an integer.
 // It never returns an error
 func (t *Timestamp) MarshalJSON() ([]byte, error) {
-	ts := time.Time(*t).Unix()
+	ts := t.Unix()
 	stamp := fmt.Sprint(ts)
 
 	return []byte(stamp), nil
@@ -31,7 +34,7 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
-	*t = Timestamp(time.Unix(ts, 0))
+	*t = Timestamp{time.Unix(ts, 0)}
 
 	return nil
 }
@@ -46,5 +49,5 @@ func TimestampNow() Timestamp {
 // TimestampFromInt64 returns a Timestamp equal to the given int64, assuming it
 // too is a unix timestamp
 func TimestampFromInt64(ts int64) Timestamp {
-	return Timestamp(time.Unix(ts, 0))
+	return Timestamp{time.Unix(ts, 0)}
 }
