@@ -24,8 +24,7 @@ func RequestKV(r *http.Request) llog.KV {
 	}
 }
 
-// LLCodec wraps around an existing rpc.Codec implementation, adding logging to
-// all requests
+// LLCodec wraps around gorilla's json2.Codec, adding logging to all requests
 type LLCodec struct {
 	c rpc.Codec
 
