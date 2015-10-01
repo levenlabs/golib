@@ -112,6 +112,11 @@ func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error
 			Message: fmt.Sprintf("unexpected internal server error: %s", err),
 		}
 	}
+	if kv, ok := jsonErr.Data.(llog.KV); ok {
+		for k, v := range kv {
+			cr.kv[k] = v
+		}
+	}
 
 	// The only predefined error that is considered a server error really is
 	// E_SERVER, all the others which are less than it are basically client
