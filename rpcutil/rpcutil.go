@@ -3,6 +3,8 @@
 package rpcutil
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +26,37 @@ func RequestKV(r *http.Request) llog.KV {
 	}
 }
 
+// we don't ever really pass this into encoding/json, so having it implement
+// json.Marshaler isn't really necessary, but it's helpful to think of it in
+// this way
+type jsonInliner struct {
+	orig  interface{}
+	extra map[string]interface{}
+}
+
+func (j jsonInliner) MarshalJSON() ([]byte, error) {
+	bOrig, err := json.Marshal(j.orig)
+	if err != nil {
+		return nil, err
+	}
+	if len(bOrig) < 2 || bOrig[len(bOrig)-1] != '}' {
+		return nil, errors.New("jsonInliner original value not an object")
+	}
+	if len(j.extra) == 0 {
+		return bOrig, nil
+	}
+
+	bExtra, err := json.Marshal(j.extra)
+	if err != nil {
+		return nil, err
+	}
+
+	bOrig = bOrig[:len(bOrig)-1]
+	bOrig = append(bOrig, ',')
+	bOrig = append(bOrig, bExtra[1:]...)
+	return bOrig, nil
+}
+
 // LLCodec wraps around gorilla's json2.Codec, adding logging to all requests
 type LLCodec struct {
 	c rpc.Codec
@@ -36,6 +69,16 @@ type LLCodec struct {
 	// If true the gopkg.in/validator.v2 package will be used to automatically
 	// validate inputs to calls
 	ValidateInput bool
+
+	// If set, once a non-error response is returned by an rpc endpoint this
+	// will be called and the result (if non-nil) will be inlined with the
+	// original response. The original response must encode to a json object for
+	// this to work.
+	//
+	// For example, if the original response encodes to `{"success":true}`, and
+	// ResponseInliner returns `{"currentTime":123456}`, the final response sent
+	// to the client will be `{"success":true,"currentTime":123456}`
+	ResponseInliner func(*http.Request) map[string]interface{}
 }
 
 // NewLLCodec returns an LLCodec, which is an implementation of rpc.Codec around
@@ -92,11 +135,39 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 	return nil
 }
 
+func (cr llCodecRequest) maybeInlineExtra(r interface{}) (interface{}, error) {
+	if cr.c.ResponseInliner == nil {
+		return r, nil
+	}
+	extra := cr.c.ResponseInliner(cr.r)
+	if extra == nil {
+		return r, nil
+	}
+
+	j := jsonInliner{orig: r, extra: extra}
+	b, err := j.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	jr := json.RawMessage(b)
+	return &jr, nil
+}
+
 func (cr llCodecRequest) WriteResponse(w http.ResponseWriter, r interface{}) {
 	if llog.GetLevel() == llog.DebugLevel {
 		cr.kv["response"] = fmt.Sprintf("%+v", r)
 		llog.Debug("jsonrpc responding", cr.kv)
 	}
+
+	newR, err := cr.maybeInlineExtra(r)
+	if err != nil {
+		cr.kv["err"] = err
+		cr.kv["orig"], _ = json.Marshal(r)
+		llog.Error("jsonrpc could not inline extra", cr.kv)
+	} else {
+		r = newR
+	}
+
 	cr.CodecRequest.WriteResponse(w, r)
 }
 
