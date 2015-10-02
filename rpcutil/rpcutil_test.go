@@ -109,4 +109,35 @@ func TestLLCodec(t *T) {
 		Code: json2.E_BAD_PARAMS, Message: "Foo: less than min",
 	}, err)
 
+	// Test ResponseInliner, first returning nil to confirm that doesn't do
+	// anything
+	c = NewLLCodec()
+	c.ResponseInliner = func(_ *http.Request) map[string]interface{} {
+		return nil
+	}
+	h = JSONRPC2Handler(c, TestRPC{})
+
+	// The normal test should not have changed
+	i = int(testutil.RandInt64())
+	args = TestArgs{i}
+	resm := map[string]interface{}{}
+	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoFoo", &args))
+	assert.Equal(t, 1, len(resm))
+	assert.Equal(t, float64(i), resm["Bar"])
+
+	// Now have it actually do something
+	c.ResponseInliner = func(_ *http.Request) map[string]interface{} {
+		return map[string]interface{}{
+			"Extra": "turtles",
+		}
+	}
+	h = JSONRPC2Handler(c, TestRPC{})
+
+	i = int(testutil.RandInt64())
+	args = TestArgs{i}
+	resm = map[string]interface{}{}
+	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoFoo", &args))
+	assert.Equal(t, 2, len(resm))
+	assert.Equal(t, float64(i), resm["Bar"])
+	assert.Equal(t, "turtles", resm["Extra"])
 }
