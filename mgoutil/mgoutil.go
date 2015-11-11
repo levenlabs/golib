@@ -37,3 +37,30 @@ func MustEnsureIndexes(db *mgo.Database, indexes ...Index) {
 		}
 	}
 }
+
+// CollectionHelper is a simple helper type which makes it easy to call methods
+// on a Database or Collection safely. It will handle the Copy'ing and Close'ing
+// of the given Session automatically
+type SessionHelper struct {
+	Session *mgo.Session
+	DB      string
+	Coll    string
+}
+
+// WithDB handles calls the given function on an instance of the database named
+// by the field in the SessionHelper. It will handle Copy'ing and Close'ing the
+// Session object automatically.
+func (s SessionHelper) WithDB(fn func(*mgo.Database)) {
+	session := s.Session.Copy()
+	defer session.Close()
+	fn(session.DB(s.DB))
+}
+
+// WithColl handles calls the given function on an instance of the collection
+// named by the field in the SessionHelper. It will handle Copy'ing and
+// Close'ing the Session object automatically.
+func (s SessionHelper) WithColl(fn func(*mgo.Collection)) {
+	s.WithDB(func(db *mgo.Database) {
+		fn(db.C(s.Coll))
+	})
+}
