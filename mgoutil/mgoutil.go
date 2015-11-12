@@ -10,9 +10,11 @@ import (
 // Index is used in MustEnsureIndexes to convey all the information needed to
 // ensure a background index
 type Index struct {
-	Name string // human readable name for the index, only used for the log entry
-	Keys []string
-	Coll string
+	Name   string // human readable name for the index, only used for the log entry
+	Keys   []string
+	Coll   string
+	Unique bool
+	Sparse bool
 }
 
 // MustEnsureIndexes takes the given indexes and ensure's they are all in place.
@@ -30,6 +32,8 @@ func MustEnsureIndexes(db *mgo.Database, indexes ...Index) {
 		err := db.C(i.Coll).EnsureIndex(mgo.Index{
 			Key:        i.Keys,
 			Background: true,
+			Unique:     i.Unique,
+			Sparse:     i.Sparse,
 		})
 		if err != nil {
 			kv["err"] = err
