@@ -27,3 +27,21 @@ func TestPreRegex(t *T) {
 	require.Nil(t, validator.Valid("10", "preRegex=int"))
 	require.Nil(t, validator.Valid("Something", "preRegex=alpha"))
 }
+
+func TestLens(t *T) {
+	InstallCustomValidators()
+
+	tags := "lens=2|0"
+	require.Nil(t, validator.Valid(int64(2), tags))
+	require.Nil(t, validator.Valid(int64(0), tags))
+	require.NotNil(t, validator.Valid(int64(9), tags))
+	require.Nil(t, validator.Valid([]int64{5, 6}, tags))
+	require.Nil(t, validator.Valid([]int64{}, tags))
+	require.NotNil(t, validator.Valid([]int64{1}, tags))
+	require.Nil(t, validator.Valid("hi", tags))
+	require.Nil(t, validator.Valid("", tags))
+	require.NotNil(t, validator.Valid("hello", tags))
+	require.Nil(t, validator.Valid(float64(2.0), tags))
+	require.Nil(t, validator.Valid(float64(0), tags))
+	require.NotNil(t, validator.Valid(float64(2.1), tags))
+}
