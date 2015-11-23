@@ -9,6 +9,9 @@ import (
 
 // Index is used in MustEnsureIndexes to convey all the information needed to
 // ensure a background index
+//
+// DEPRECATED: MustEnsureIndexes is deprecated, and therefore this type is as
+// well. This will be removed at some point in the future
 type Index struct {
 	Name   string // human readable name for the index, only used for the log entry
 	Keys   []string
@@ -20,6 +23,13 @@ type Index struct {
 // MustEnsureIndexes takes the given indexes and ensure's they are all in place.
 // It will make the calls with Background:true. If any indexes fail a message
 // will be logged and the process will exit
+//
+// DEPRECATED: Use the MustEnsureIndexes method on SessionHelper instead. This
+// will be removed at some point in the future
+//
+// NOTE WHEN SWITCHING TO NEW METHOD: the new method does *not* automatically
+// set Background: true like this one does, so be aware of that difference when
+// switching over
 func MustEnsureIndexes(db *mgo.Database, indexes ...Index) {
 	for _, i := range indexes {
 		kv := llog.KV{
@@ -66,5 +76,24 @@ func (s SessionHelper) WithDB(fn func(*mgo.Database)) {
 func (s SessionHelper) WithColl(fn func(*mgo.Collection)) {
 	s.WithDB(func(db *mgo.Database) {
 		fn(db.C(s.Coll))
+	})
+}
+
+// MustEnsureIndexes takes the given indexes and ensure's they are all in place.
+// If any indexes fail a message will be logged and the process will exit
+func (s SessionHelper) MustEnsureIndexes(indexes ...mgo.Index) {
+	s.WithColl(func(c *mgo.Collection) {
+		for _, index := range indexes {
+			kv := llog.KV{
+				"key":  index.Key,
+				"coll": s.Coll,
+				"db":   s.DB,
+			}
+			llog.Info("ensuring mongo index", kv)
+			if err := c.EnsureIndex(index); err != nil {
+				kv["err"] = err
+				llog.Fatal("could not ensure mongo index", kv)
+			}
+		}
 	})
 }
