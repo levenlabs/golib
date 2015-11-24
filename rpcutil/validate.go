@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"gopkg.in/validator.v2"
+	"net/mail"
 	"strconv"
 	"strings"
 )
@@ -26,6 +27,7 @@ func InstallCustomValidators() {
 	validator.SetValidationFunc("preRegex", ValidatePreRegex)
 	validator.SetValidationFunc("arrMap", ValidateArrMap)
 	validator.SetValidationFunc("lens", ValidateLens)
+	validator.SetValidationFunc("email", ValidateEmail)
 }
 
 // ValidatePreRegex will run a regex named by regexName on a string. This is
@@ -42,7 +44,7 @@ func ValidatePreRegex(v interface{}, regexName string) error {
 
 	vs, ok := v.(string)
 	if !ok {
-		return errors.New("not a string")
+		return validator.ErrUnsupported
 	}
 
 	// We allow blank strings no matter what, if a blank string is not wanted to
@@ -180,4 +182,19 @@ func ValidateLens(v interface{}, param string) error {
 		return validator.ErrUnsupported
 	}
 	return nil
+}
+
+// ValidateEmail validates a string as an email address as defined by RFC 5322
+// Behind the scenes it just uses ParseAddress in the src/net/mail package
+func ValidateEmail(v interface{}, _ string) error {
+	email, ok := v.(string)
+	if !ok {
+		return validator.ErrUnsupported
+	}
+
+	a, err := mail.ParseAddress(email)
+	if err == nil && a.Address != email {
+		err = fmt.Errorf("email interpreted as \"%s\" but was sent \"%s\"", a.Address, email)
+	}
+	return err
 }

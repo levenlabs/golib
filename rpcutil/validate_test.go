@@ -45,3 +45,14 @@ func TestLens(t *T) {
 	require.Nil(t, validator.Valid(float64(0), tags))
 	require.NotNil(t, validator.Valid(float64(2.1), tags))
 }
+
+func TestEmail(t *T) {
+	InstallCustomValidators()
+
+	tags := "email"
+	require.Nil(t, validator.Valid("james@levenlabs.com", tags))
+	//require.Nil(t, validator.Valid("james@[IPv6:2001:4860:4860::8888]", tags))
+	require.Nil(t, validator.Valid("james@8.8.8.8", tags))
+	require.NotNil(t, validator.Valid("fake", tags))
+	require.NotNil(t, validator.Valid("f@ke@example.com", tags))
+}
