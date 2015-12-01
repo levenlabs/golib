@@ -5,6 +5,8 @@ import (
 	"strconv"
 	. "testing"
 
+	"gopkg.in/mgo.v2/bson"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,4 +29,21 @@ func TestTimestamp(t *T) {
 	err = json.Unmarshal(tsJ, &ts3)
 	require.Nil(t, err)
 	assert.Equal(t, ts, ts3)
+}
+
+func TestTimestampBSON(t *T) {
+	type Foo struct {
+		T Timestamp `bson:"t"`
+	}
+
+	now := TimestampNow()
+	in := Foo{now}
+	b, err := bson.Marshal(in)
+	require.Nil(t, err)
+	assert.NotEmpty(t, b)
+
+	var out Foo
+	err = bson.Unmarshal(b, &out)
+	require.Nil(t, err)
+	assert.Equal(t, in, out)
 }

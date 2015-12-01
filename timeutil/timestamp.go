@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"gopkg.in/mgo.v2/bson"
 )
 
 // Credit to Gal Ben-Heim, from this post:
@@ -37,6 +39,16 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 	*t = Timestamp{time.Unix(ts, 0)}
 
 	return nil
+}
+
+// GetBSON implements the bson.Getter interface
+func (t Timestamp) GetBSON() (interface{}, error) {
+	return t.Time, nil
+}
+
+// SetBSON implements the bson.Setter interface
+func (t *Timestamp) SetBSON(raw bson.Raw) error {
+	return raw.Unmarshal(&t.Time)
 }
 
 // TimestampNow is simply a wrapper around time.Now which returns a Timestamp.
