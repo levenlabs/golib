@@ -21,7 +21,7 @@ type Timestamp struct {
 
 // MarshalJSON returns the JSON representation of the Timestamp as an integer.
 // It never returns an error
-func (t *Timestamp) MarshalJSON() ([]byte, error) {
+func (t Timestamp) MarshalJSON() ([]byte, error) {
 	ts := t.Unix()
 	stamp := fmt.Sprint(ts)
 

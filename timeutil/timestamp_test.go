@@ -31,11 +31,24 @@ func TestTimestamp(t *T) {
 	assert.Equal(t, ts, ts3)
 }
 
-func TestTimestampBSON(t *T) {
-	type Foo struct {
-		T Timestamp `bson:"t"`
-	}
+type Foo struct {
+	T Timestamp `json:"timestamp" bson:"t"`
+}
 
+func TestTimestampJSON(t *T) {
+	now := TimestampNow()
+	in := Foo{now}
+	b, err := json.Marshal(in)
+	require.Nil(t, err)
+	assert.NotEmpty(t, b)
+
+	var out Foo
+	err = json.Unmarshal(b, &out)
+	require.Nil(t, err)
+	assert.Equal(t, in, out)
+}
+
+func TestTimestampBSON(t *T) {
 	now := TimestampNow()
 	in := Foo{now}
 	b, err := bson.Marshal(in)
