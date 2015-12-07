@@ -2,9 +2,11 @@ package rpcutil
 
 import (
 	"net/http"
+	"reflect"
 
 	"github.com/gorilla/rpc/v2"
 	"github.com/levenlabs/gatewayrpc"
+	"github.com/levenlabs/go-llog"
 )
 
 // JSONRPC2Handler returns an http.Handler which will handle JSON RPC2 calls
@@ -14,7 +16,12 @@ func JSONRPC2Handler(codec rpc.Codec, service ...interface{}) http.Handler {
 	s := gatewayrpc.NewServer()
 	s.RegisterCodec(codec, "application/json")
 	for i := range service {
-		s.RegisterService(service[i], "")
+		if err := s.RegisterService(service[i], ""); err != nil {
+			llog.Fatal("error registering service", llog.KV{
+				"service": reflect.TypeOf(service[i]).String(),
+				"err":     err,
+			})
+		}
 	}
 	return s
 }
