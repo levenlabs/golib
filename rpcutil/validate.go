@@ -6,10 +6,11 @@ import (
 	"reflect"
 	"regexp"
 
-	"gopkg.in/validator.v2"
 	"net/mail"
 	"strconv"
 	"strings"
+
+	"gopkg.in/validator.v2"
 )
 
 var vRegexes = map[string]*regexp.Regexp{}
@@ -190,6 +191,12 @@ func ValidateEmail(v interface{}, _ string) error {
 	email, ok := v.(string)
 	if !ok {
 		return validator.ErrUnsupported
+	}
+
+	// We allow blank strings no matter what, if a blank string is not wanted to
+	// be allowed then the "nonzero" validator should be added
+	if email == "" {
+		return nil
 	}
 
 	a, err := mail.ParseAddress(email)
