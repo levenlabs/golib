@@ -5,6 +5,7 @@ package mgoutil
 import (
 	"github.com/levenlabs/go-llog"
 	"gopkg.in/mgo.v2"
+	"time"
 )
 
 // Index is used in MustEnsureIndexes to convey all the information needed to
@@ -50,6 +51,24 @@ func MustEnsureIndexes(db *mgo.Database, indexes ...Index) {
 			llog.Fatal("could not ensure mongo index", kv)
 		}
 	}
+}
+
+// EnsureSession connections to the given addr with a 5 second timeout, sets the
+// session to Safe, sets the mode to PrimaryPreferred, and returns the resulting
+// mgo.Session. If it fails to connect it fatals.
+func EnsureSession(addr string) *mgo.Session {
+	kv := llog.KV{"addr": addr}
+	llog.Info("dialing mongo", kv)
+	s, err := mgo.DialWithTimeout(addr, 5 * time.Second)
+	if err != nil {
+		kv["err"] = err
+		llog.Fatal("error calling mgo.DialWithTimeout", kv)
+	}
+	s.SetSafe(&mgo.Safe{})
+	s.SetMode(mgo.PrimaryPreferred, true)
+
+	llog.Info("done setting up mongo connection", kv)
+	return s
 }
 
 // CollectionHelper is a simple helper type which makes it easy to call methods
