@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/validator.v2"
+	"time"
 )
 
 func TestArrMap(t *T) {
@@ -55,4 +56,27 @@ func TestEmail(t *T) {
 	require.Nil(t, validator.Valid("james@8.8.8.8", tags))
 	require.NotNil(t, validator.Valid("fake", tags))
 	require.NotNil(t, validator.Valid("f@ke@example.com", tags))
+}
+
+func TestFutureTime(t *T) {
+	InstallCustomValidators()
+
+	tags := "futureTime"
+	require.Nil(t, validator.Valid(time.Now(), tags))
+	require.Nil(t, validator.Valid(time.Now().Add(-1*time.Minute), tags))
+	require.NotNil(t, validator.Valid(time.Now().Add(-1*time.Hour), tags))
+
+	tags = "futureTime=5h"
+	require.Nil(t, validator.Valid(time.Now().Add(6*time.Hour), tags))
+	require.NotNil(t, validator.Valid(time.Now(), tags))
+	require.NotNil(t, validator.Valid(time.Now().Add(4*time.Hour), tags))
+
+	tags = "futureTime=-5h"
+	require.Nil(t, validator.Valid(time.Now().Add(-4*time.Hour), tags))
+	require.Nil(t, validator.Valid(time.Now(), tags))
+	require.NotNil(t, validator.Valid(time.Now().Add(-6*time.Hour), tags))
+
+	tags = "futureTime=0"
+	require.Nil(t, validator.Valid(time.Now().Add(1*time.Second), tags))
+	require.NotNil(t, validator.Valid(time.Now().Add(-1*time.Second), tags))
 }

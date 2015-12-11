@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"gopkg.in/validator.v2"
+	"time"
 )
 
 var vRegexes = map[string]*regexp.Regexp{}
@@ -29,6 +30,7 @@ func InstallCustomValidators() {
 	validator.SetValidationFunc("arrMap", ValidateArrMap)
 	validator.SetValidationFunc("lens", ValidateLens)
 	validator.SetValidationFunc("email", ValidateEmail)
+	validator.SetValidationFunc("futureTime", ValidateFutureTime)
 }
 
 // ValidatePreRegex will run a regex named by regexName on a string. This is
@@ -204,4 +206,30 @@ func ValidateEmail(v interface{}, _ string) error {
 		err = fmt.Errorf("email interpreted as \"%s\" but was sent \"%s\"", a.Address, email)
 	}
 	return err
+}
+
+// ValidateFutureTime validates that the time is > than now + (duration value)
+// The default value is -15m (-15 minutes). It is not exactly 0 hours
+// to prevent client time differences causing user frustration. Do not rely on
+// the default value being -15m as it might change slightly in the future. If
+// you want 0 hours just set "0".
+// For example: futureTime=-4h validates that the time is > now - 4 hours
+func ValidateFutureTime(v interface{}, s string) error {
+	var err error
+	offset := -15 * time.Minute
+	if s != "" {
+		offset, err = time.ParseDuration(s)
+		if err != nil {
+			return validator.ErrBadParameter
+		}
+	}
+	t, ok := v.(interface {
+		After(time.Time) bool
+	})
+	if !ok {
+		return validator.ErrUnsupported
+	} else if !t.After(time.Now().Add(offset)) {
+		return fmt.Errorf("time is not greater than now %s", s)
+	}
+	return nil
 }
