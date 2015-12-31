@@ -1,21 +1,19 @@
 // Package ratelimiter implements a generic ratelimiter using a token bucket
-// algorithm and a backing redis instance (or cluster)
+// algorithm and a backing redis instance (or cluster).
+//
+// Conceptually, each arbitray key has a bucket of tokens. Tokens are taken from
+// the bucket whenever some action is being performed, and if the bucket is
+// empty then the action is considered rate limited. The bucket for each key is
+// refilled at a given interval, up to a maximum amount of tokens. A key never
+// used before automatically has a full bucket.
 package ratelimiter
 
 import (
-	"errors"
-	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/util"
-)
-
-// Errors which may be returned
-var (
-	ErrRateLimited = errors.New("rate limited")
 )
 
 // RateLimiter describes a token bucket system which can be used for
@@ -35,13 +33,13 @@ type RateLimiter struct {
 // option has a default value which will be used if the field is not set.
 type Opts struct {
 
-	// Number of tokens which are added to any given bucket every second.
-	// Defaults to 1
-	FillTokensPerSecond float64
+	// Duration of time before a token is returned to a key's bucket. Only
+	// precision up to the millisecond is actually used. Defaults to 1 second.
+	Interval time.Duration
 
 	// Maximum number of tokens which are allowed to be in a bucket. Defaults
 	// to 10
-	MaxTokens float64
+	MaxTokens int64
 
 	// The string which will be prefixed to all keys stored in redis. Defaults
 	// to "ratelimiter"
@@ -84,8 +82,8 @@ func fillOpts(o *Opts) Opts {
 		o = &Opts{}
 	}
 
-	if o.FillTokensPerSecond == 0 {
-		o.FillTokensPerSecond = 1
+	if o.Interval == 0 {
+		o.Interval = 1 * time.Second
 	}
 	if o.MaxTokens == 0 {
 		o.MaxTokens = 10
@@ -99,66 +97,51 @@ func fillOpts(o *Opts) Opts {
 	return *o
 }
 
-func (r *RateLimiter) bucketKey(key string) string {
-	return fmt.Sprintf("%s-{%s}-bucket", r.opts.Prefix, key)
-}
-
-func (r *RateLimiter) tsKey(key string) string {
-	return fmt.Sprintf("%s-{%s}-ts", r.opts.Prefix, key)
-}
-
+// key limit intervalMS nowMS [amount]
 const takeScript = `
-	local bucketKey = KEYS[1]
-	local tsKey = KEYS[2]
-
-	local toTake = tonumber(ARGV[1])
-	local curTS = tonumber(ARGV[2])
-	local perSec = tonumber(ARGV[3])
-	local maxTokens = tonumber(ARGV[4])
-
-	local tokens
-	local vals = redis.call("MGET", bucketKey, tsKey)
-	if not vals[1] or not vals[2] then
-		tokens = maxTokens
-	else
-		local diffTS = curTS - tonumber(vals[2])
-		tokens = tonumber(vals[1]) + (diffTS*perSec)
+	local key = KEYS[1]
+	local limit = tonumber(ARGV[1])
+	local intervalMS = tonumber(ARGV[2])
+	local nowMS = tonumber(ARGV[3])
+	local amount = 1
+	if ARGV[4] then
+	    amount = math.max(tonumber(ARGV[4]), 0)
 	end
 
-	tokens = tokens - toTake
-	if tokens < 0 then
-		return "0"
+	redis.call('ZREMRANGEBYSCORE', key, '-inf', nowMS - intervalMS)
+	local num = redis.call('ZCARD', key)
+
+	local left = limit - num - amount
+	if left < 0 then
+		return left
 	end
 
-	redis.call("MSET", bucketKey, tokens, tsKey, curTS)
-	local expire = math.ceil(maxTokens / perSec)
-	redis.call("EXPIRE", bucketKey, expire)
-	redis.call("EXPIRE", tsKey, expire)
-	return tostring(tokens)
+	local args = {'ZADD', key}
+	for i = 1, amount do
+	    args[(i * 2) + 1] = nowMS
+	    args[(i * 2) + 2] = string.format("%x%x%x", nowMS, num, i)
+	end
+	redis.call(unpack(args))
+	redis.call('PEXPIRE', key, intervalMS)
+	return left
 `
 
 // Take will attempt to take the given number of tokens out of the bucket
 // identified by key, and returns the number of tokens left in the bucket. If
-// the bucket does not have enough tokens in it then none are taken out, and
-// ErrRateLimited is returned
-func (r *RateLimiter) Take(key string, tokens float64) (float64, error) {
-	curTS := float64(time.Now().UnixNano()) / 1.0e9
-	left, err := util.LuaEval(
+// the bucket does not have enough tokens in it then none are taken out and a
+// negative value is returned. An error is only returned in the case of not
+// being able to communicate with the datastore.
+func (r *RateLimiter) Take(key string, tokens int64) (int64, error) {
+	nowMS := time.Now().UnixNano() / 1.0e6
+	intervalMS := int64(r.opts.Interval.Seconds() * 1.0e3)
+	return util.LuaEval(
 		r.rc,
 		takeScript,
-		2,
-		r.bucketKey(key),
-		r.tsKey(key),
-		tokens,
-		curTS,
-		r.opts.FillTokensPerSecond,
+		1,
+		r.opts.Prefix+"-"+key,
 		r.opts.MaxTokens,
-	).Str()
-	if err != nil {
-		return 0, err
-	} else if left == "0" {
-		return 0, ErrRateLimited
-	}
-
-	return strconv.ParseFloat(left, 64)
+		intervalMS,
+		nowMS,
+		tokens,
+	).Int64()
 }
