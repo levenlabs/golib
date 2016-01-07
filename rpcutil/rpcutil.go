@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 
 	"gopkg.in/validator.v2"
@@ -19,10 +18,8 @@ import (
 // RequestKV returns a basic KV for passing into llog, filled with entries
 // related to the passed in http.Request
 func RequestKV(r *http.Request) llog.KV {
-	// TODO maybe handle X-Forwarded-For? gotta talk to james
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return llog.KV{
-		"ip": ip,
+		"ip": RequestIP(r),
 	}
 }
 
