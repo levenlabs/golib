@@ -113,6 +113,15 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		return err
 	}
 
+	cr.kv["method"], _ = cr.CodecRequest.Method()
+	var fn llog.LogFunc
+	if llog.GetLevel() == llog.DebugLevel {
+		cr.kv["args"] = fmt.Sprintf("%+v", args)
+		fn = llog.Debug
+	} else {
+		fn = llog.Info
+	}
+
 	if cr.c.ValidateInput {
 		if err := validator.Validate(args); err != nil {
 			return &json2.Error{
@@ -122,14 +131,6 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		}
 	}
 
-	cr.kv["method"], _ = cr.CodecRequest.Method()
-	var fn llog.LogFunc
-	if llog.GetLevel() == llog.DebugLevel {
-		cr.kv["args"] = fmt.Sprintf("%+v", args)
-		fn = llog.Debug
-	} else {
-		fn = llog.Info
-	}
 	fn("jsonrpc incoming request", cr.kv)
 
 	return nil
