@@ -76,13 +76,17 @@ type LLCodec struct {
 	// ResponseInliner returns `{"currentTime":123456}`, the final response sent
 	// to the client will be `{"success":true,"currentTime":123456}`
 	ResponseInliner func(*http.Request) map[string]interface{}
+
+	// All endpoints (fullname, i.e. "Service.Method") set as keys in this map
+	// will not have an INFO log printed out when they are hit
+	ExcludeRequestLog map[string]bool
 }
 
 // NewLLCodec returns an LLCodec, which is an implementation of rpc.Codec around
 // json2.Codec. All public fields on LLCodec can be modified up intil passing
 // this into rpc.RegisterCodec
 func NewLLCodec() LLCodec {
-	return LLCodec{c: json2.NewCodec()}
+	return LLCodec{c: json2.NewCodec(), ExcludeRequestLog: map[string]bool{}}
 }
 
 // NewRequest implements the NewRequest method for the rpc.Codec interface
@@ -110,9 +114,12 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		return err
 	}
 
-	cr.kv["method"], _ = cr.CodecRequest.Method()
+	method, _ := cr.CodecRequest.Method()
+	cr.kv["method"] = method
 	var fn llog.LogFunc
-	if llog.GetLevel() == llog.DebugLevel {
+	if cr.c.ExcludeRequestLog[method] {
+		// don't log anything
+	} else if llog.GetLevel() == llog.DebugLevel {
 		cr.kv["args"] = fmt.Sprintf("%+v", args)
 		fn = llog.Debug
 	} else {
@@ -128,7 +135,9 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		}
 	}
 
-	fn("jsonrpc incoming request", cr.kv)
+	if fn != nil {
+		fn("jsonrpc incoming request", cr.kv)
+	}
 
 	return nil
 }
