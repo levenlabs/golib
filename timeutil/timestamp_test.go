@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	. "testing"
+	"time"
 
 	"gopkg.in/mgo.v2/bson"
 
@@ -18,17 +19,27 @@ func TestTimestamp(t *T) {
 	require.Nil(t, err)
 
 	// tsJ should basically be an integer
-	tsI, err := strconv.ParseInt(string(tsJ), 10, 64)
+	tsF, err := strconv.ParseFloat(string(tsJ), 64)
 	require.Nil(t, err)
-	assert.True(t, tsI > 0)
+	assert.True(t, tsF > 0)
 
-	ts2 := TimestampFromInt64(tsI)
+	ts2 := TimestampFromFloat64(tsF)
 	assert.Equal(t, ts, ts2)
 
 	var ts3 Timestamp
 	err = json.Unmarshal(tsJ, &ts3)
 	require.Nil(t, err)
 	assert.Equal(t, ts, ts3)
+}
+
+// Make sure that we can take in a non-float from json
+func TestTimestampMarshalInt(t *T) {
+	now := time.Now()
+	tsJ := []byte(strconv.FormatInt(now.Unix(), 10))
+	var ts Timestamp
+	err := json.Unmarshal(tsJ, &ts)
+	require.Nil(t, err)
+	assert.Equal(t, ts.Float64(), float64(now.Unix()))
 }
 
 type Foo struct {
@@ -49,7 +60,11 @@ func TestTimestampJSON(t *T) {
 }
 
 func TestTimestampBSON(t *T) {
-	now := TimestampNow()
+	// BSON only supports up to millisecond precision, but even if we keep that
+	// many it kinda gets messed up due to rounding errors. So we just give it
+	// one with second precision
+	now := TimestampFromInt64(time.Now().Unix())
+
 	in := Foo{now}
 	b, err := bson.Marshal(in)
 	require.Nil(t, err)
