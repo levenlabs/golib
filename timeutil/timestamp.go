@@ -17,6 +17,13 @@ type Timestamp struct {
 	time.Time
 }
 
+// String returns the string representation of the Timestamp, in the form of a
+// floating point form of the time as a unix timestamp
+func (t Timestamp) String() string {
+	ts := timeToFloat(t.Time)
+	return strconv.FormatFloat(ts, 'f', -1, 64)
+}
+
 // MarshalJSON returns the JSON representation of the Timestamp as an integer.
 // It never returns an error
 func (t Timestamp) MarshalJSON() ([]byte, error) {
