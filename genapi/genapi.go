@@ -196,9 +196,6 @@ func (g *GenAPI) APIMode() {
 	h := g.RPC()
 
 	g.ListenAddr, _ = g.Lever.ParamStr("--listen-addr")
-	if g.ListenAddr == "" {
-		g.ListenAddr = ":0"
-	}
 
 	// We listen on a random port if none is given. We have to jump through
 	// some hoops to actually do this, most of these hoops being copied from
@@ -284,7 +281,8 @@ func (g *GenAPI) doLever() {
 	if g.Mode == APIMode {
 		g.Lever.Add(lever.Param{
 			Name:        "--listen-addr",
-			Description: "[address]:port to listen for rpc requests on. If unset a port will be chosen randomly",
+			Description: "[address]:port to listen for rpc requests on. If port is zero a port will be chosen randomly",
+			Default:     ":0",
 		})
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
