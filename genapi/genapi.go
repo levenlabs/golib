@@ -70,8 +70,12 @@
 package genapi
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/gorilla/rpc/v2"
 	"github.com/levenlabs/go-llog"
@@ -84,6 +88,18 @@ import (
 	"github.com/mediocregopher/skyapi/client"
 	"gopkg.in/mgo.v2"
 )
+
+// This can be set using:
+//	-ldflags "-X github.com/levenlabs/golib/genapi.Version versionstring"
+// on the go build command. When this is done, the --version flag will be
+// available on the command-line and will print out whatever version string is
+// passed in.
+//
+// It could also be set manually during runtime, but that would kind of defeat
+// the purpose.
+//
+// Version will be automatically unquoted
+var Version string
 
 // MongoInfo contains information needed by the api to interact with a mongo
 // backend, and also houses the connection to that backend (which can be
@@ -248,6 +264,19 @@ func (g *GenAPI) init() {
 	rpcutil.InstallCustomValidators()
 	g.doLever()
 
+	if g.Lever.ParamFlag("--version") {
+		v := Version
+		if v[0] != '"' {
+			v = `"` + v + `"`
+		}
+		if uv, err := strconv.Unquote(v); err == nil {
+			v = uv
+		}
+		fmt.Println(v)
+		time.Sleep(100 * time.Millisecond)
+		os.Exit(0)
+	}
+
 	ll, _ := g.ParamStr("--log-level")
 	llog.SetLevelFromString(ll)
 
@@ -308,6 +337,15 @@ func (g *GenAPI) doLever() {
 			Name:        "--redis-pool-size",
 			Description: "Number of connections to a single redis instance to use. If a cluster is being used, this many connections will be made to each member of the cluster",
 			Default:     "10",
+		})
+	}
+
+	if Version != "" {
+		g.Lever.Add(lever.Param{
+			Name:        "--version",
+			Aliases:     []string{"-v"},
+			Description: "Print out version information for this binary",
+			Flag:        true,
 		})
 	}
 
