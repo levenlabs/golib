@@ -18,9 +18,19 @@ import (
 // RequestKV returns a basic KV for passing into llog, filled with entries
 // related to the passed in http.Request
 func RequestKV(r *http.Request) llog.KV {
-	return llog.KV{
+	kv := llog.KV{
 		"ip": RequestIP(r),
 	}
+	// first try Referer, but fallback to Origin
+	if ref := r.Header.Get("Referer"); ref != "" {
+		kv["referer"] = ref
+	} else if o := r.Header.Get("Origin"); o != "" {
+		kv["origin"] = o
+	}
+	if via := r.Header.Get("Via"); via != "" {
+		kv["via"] = via
+	}
+	return kv
 }
 
 // we don't ever really pass this into encoding/json, so having it implement
