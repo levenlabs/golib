@@ -60,3 +60,17 @@ func RequestIP(r *http.Request) string {
 
 	return reqIP
 }
+
+// AddProxyXForwardedFor populates the X-Forwarded-For header on dst to convey
+// that src is being proxied by this server. dst and src may be the same
+// pointer.
+func AddProxyXForwardedFor(dst, src *http.Request) {
+	rIP, _, _ := net.SplitHostPort(src.RemoteAddr)
+	var xff string
+	if xffs, ok := src.Header["X-Forwarded-For"]; ok {
+		xff = strings.Join(xffs, ", ") + ", " + rIP
+	} else {
+		xff = rIP
+	}
+	dst.Header.Set("X-Forwarded-For", xff)
+}
