@@ -78,6 +78,7 @@ import (
 	"time"
 
 	"github.com/gorilla/rpc/v2"
+	"github.com/levenlabs/gatewayrpc"
 	"github.com/levenlabs/go-llog"
 	"github.com/levenlabs/go-srvclient"
 	"github.com/levenlabs/golib/mgoutil"
@@ -163,6 +164,11 @@ type GenAPI struct {
 	// Required. The set of rpc service structs which this API will host. Must
 	// have at least one service in APIMode
 	Services []interface{}
+
+	// Like Services, but these will not be registered with the underlying
+	// gateway library, and therefore will not show up in calls to
+	// "RPC.GetMethods"
+	HiddenServices []interface{}
 
 	// Additional lever.Param structs which can be included in the lever parsing
 	LeverParams []lever.Param
@@ -257,7 +263,25 @@ func (g *GenAPI) CLIMode() {
 // RPC returns an http.Handler which will handle the RPC calls made against it
 // for the GenAPI's Services
 func (g *GenAPI) RPC() http.Handler {
-	return rpcutil.JSONRPC2Handler(g.Codec, g.Services...)
+	s := gatewayrpc.NewServer()
+	s.RegisterCodec(g.Codec, "application/json")
+	for _, service := range g.Services {
+		if err := s.RegisterService(service, ""); err != nil {
+			llog.Fatal("error registering service", llog.KV{
+				"service": fmt.Sprintf("%T", service),
+				"err":     err,
+			})
+		}
+	}
+	for _, service := range g.HiddenServices {
+		if err := s.RegisterHiddenService(service, ""); err != nil {
+			llog.Fatal("error registering hidden service", llog.KV{
+				"service": fmt.Sprintf("%T", service),
+				"err":     err,
+			})
+		}
+	}
+	return s
 }
 
 func (g *GenAPI) init() {
