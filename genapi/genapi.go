@@ -405,7 +405,7 @@ func (g *GenAPI) doSkyAPI() {
 			SkyAPIAddr:        skyapiAddr,
 			Service:           g.Name,
 			ThisAddr:          g.ListenAddr,
-			ReconnectAttempts: 3,
+			ReconnectAttempts: -1,
 		})
 		llog.Fatal("skyapi giving up reconnecting", kv)
 	}()
