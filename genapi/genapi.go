@@ -200,6 +200,13 @@ type GenAPI struct {
 	// modes are called. Indicates which mode the GenAPI is currently in, and
 	// may be used after that point to know which run mode GenAPI is in.
 	Mode string
+
+	// When initialized, this channel will be closed at the end of the init
+	// phase of running. If in APIMode it will be closed just before the call to
+	// ListenAndServe. This is useful so you can call APIMode in a separate
+	// go-routine and know when it's started listening, if there's other steps
+	// you want to take after initialization has been done.
+	InitDoneCh chan bool
 }
 
 // The different possible Mode values for GenAPI
@@ -321,6 +328,10 @@ func (g *GenAPI) init() {
 
 	if g.Init != nil {
 		g.Init(g)
+	}
+
+	if g.InitDoneCh != nil {
+		close(g.InitDoneCh)
 	}
 }
 
