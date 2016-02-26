@@ -59,6 +59,20 @@ func TestTimestampJSON(t *T) {
 	assert.Equal(t, in, out)
 }
 
+func TestTimestampZero(t *T) {
+	var ts Timestamp
+	assert.True(t, ts.IsZero())
+	assert.False(t, ts.IsUnixZero())
+	tsf := timeToFloat(ts.Time)
+	assert.Zero(t, tsf)
+
+	ts = TimestampFromFloat64(0)
+	assert.False(t, ts.IsZero())
+	assert.True(t, ts.IsUnixZero())
+	tsf = timeToFloat(ts.Time)
+	assert.Zero(t, tsf)
+}
+
 func TestTimestampBSON(t *T) {
 	// BSON only supports up to millisecond precision, but even if we keep that
 	// many it kinda gets messed up due to rounding errors. So we just give it
