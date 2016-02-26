@@ -7,7 +7,15 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
+var unixZero = time.Unix(0, 0)
+
 func timeToFloat(t time.Time) float64 {
+	// If time.Time is the empty value, UnixNano will return the farthest back
+	// timestamp a float can represent, which is some large negative value. We
+	// compromise and call it zero
+	if t.IsZero() {
+		return 0
+	}
 	return float64(t.UnixNano()) / 1e9
 }
 
@@ -58,6 +66,13 @@ func (t *Timestamp) SetBSON(raw bson.Raw) error {
 // Float64 returns the float representation of the timestamp in seconds.
 func (t Timestamp) Float64() float64 {
 	return timeToFloat(t.Time)
+}
+
+// IsUnixZero returns true if the timestamp is equal to the unix zero timestamp,
+// representing 1/1/1970. This is different than checking if the timestamp is
+// the empty value (which should be done with IsZero)
+func (t Timestamp) IsUnixZero() bool {
+	return t.Equal(unixZero)
 }
 
 // TimestampNow is simply a wrapper around time.Now which returns a Timestamp.
