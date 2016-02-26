@@ -5,10 +5,13 @@ import (
 	"net/http"
 	. "testing"
 
+	"bytes"
 	"github.com/gorilla/rpc/v2/json2"
+	"github.com/levenlabs/go-llog"
 	"github.com/levenlabs/golib/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"time"
 )
 
 type TestRPC struct{}
@@ -28,6 +31,8 @@ func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
 		return &json2.Error{Code: -1, Message: "Server doesn't know what -2 is"}
 	} else if args.Foo == -3 {
 		return errors.New("server can't even what")
+	} else if args.Foo == -4 {
+		return &QuietError{Code: 2, Message: "Don't log this"}
 	}
 
 	res.Bar = args.Foo
@@ -35,6 +40,14 @@ func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
 }
 
 func TestLLCodec(t *T) {
+	llog.SetLevelFromString("WARN")
+	oldOut := llog.Out
+	buf := bytes.NewBuffer(make([]byte, 0, 128))
+	llog.Out = buf
+	defer func() {
+		llog.Out = oldOut
+	}()
+
 	c := NewLLCodec()
 	h := JSONRPC2Handler(c, TestRPC{})
 
@@ -50,6 +63,10 @@ func TestLLCodec(t *T) {
 	args = TestArgs{-1}
 	err := JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 1, Message: "Foo can't be -1"}, err)
+	time.Sleep(100 * time.Millisecond)
+	errStr, err := buf.ReadString('\n')
+	require.Nil(t, err)
+	assert.Contains(t, errStr, "Foo can't be -1")
 
 	// Test that a server defined error makes it back to the user. This should
 	// produce an ERROR
@@ -140,4 +157,13 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, 2, len(resm))
 	assert.Equal(t, float64(i), resm["Bar"])
 	assert.Equal(t, "turtles", resm["Extra"])
+
+	// Test QuietErrors
+	buf = bytes.NewBuffer(make([]byte, 0, 128))
+	llog.Out = buf
+
+	args = TestArgs{-4}
+	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
+	assert.Equal(t, &json2.Error{Code: 2, Message: "Don't log this"}, err)
+	assert.Equal(t, 0, buf.Len())
 }

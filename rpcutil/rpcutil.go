@@ -15,6 +15,14 @@ import (
 	"github.com/levenlabs/go-llog"
 )
 
+// A QuietError is a json2.Error except that it will not cause a warn log when
+// returned from a handler
+type QuietError json2.Error
+
+func (e *QuietError) Error() string {
+	return e.Message
+}
+
 // RequestKV returns a basic KV for passing into llog, filled with entries
 // related to the passed in http.Request
 func RequestKV(r *http.Request) llog.KV {
@@ -193,8 +201,15 @@ func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error
 
 	cr.kv["err"] = err
 
-	jsonErr, ok := err.(*json2.Error)
-	if !ok {
+	var quietErr *QuietError
+	var jsonErr *json2.Error
+	switch terr := err.(type) {
+	case *QuietError:
+		quietErr = terr
+		jsonErr = (*json2.Error)(terr)
+	case *json2.Error:
+		jsonErr = terr
+	default:
 		jsonErr = &json2.Error{
 			Code:    json2.E_SERVER,
 			Message: fmt.Sprintf("unexpected internal server error: %s", err),
@@ -218,9 +233,10 @@ func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error
 			}
 		}
 		llog.Error("jsonrpc internal server error", cr.kv)
-	} else {
+	} else if quietErr == nil {
 		llog.Warn("jsonrpc client error", cr.kv)
 	}
 
+	// its okay to always return jsonErr since quietErr is a jsonErr
 	cr.CodecRequest.WriteError(w, status, jsonErr)
 }
