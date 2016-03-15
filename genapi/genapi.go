@@ -34,6 +34,10 @@
 //		myapi.GA.APIMode()
 //	}
 //
+// In APIMode the genapi will also listen for SIGTERM signals, and if it
+// receives one will unregister with skyapi, and exit once all ongoing requests
+// are completed.
+//
 // Test Mode
 //
 // When testing your api you can call TestMode from your test's init function,
@@ -74,7 +78,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/rpc/v2"
@@ -241,16 +247,37 @@ func (g *GenAPI) APIMode() {
 	kv["addr"] = g.ListenAddr
 
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
-	g.doSkyAPI()
+	skyapiStopCh := g.doSkyAPI()
+
+	hw := &httpWaiter{
+		ch: make(chan struct{}, 1),
+	}
 
 	srv := &http.Server{
 		Addr:    g.ListenAddr,
-		Handler: h,
+		Handler: hw.handler(h),
 	}
 
-	llog.Info("starting rpc listening", kv)
-	kv["err"] = srv.Serve(tcpKeepAliveListener{ln.(*net.TCPListener)})
-	llog.Fatal("rpc listening failed", kv)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		llog.Info("starting rpc listening", kv)
+		srv.Serve(tcpKeepAliveListener{ln.(*net.TCPListener)})
+	}()
+
+	<-sigCh
+	llog.Info("signal received, stopping")
+	if skyapiStopCh != nil {
+		llog.Info("stopping skyapi connection")
+		close(skyapiStopCh)
+		// Wait a bit just in case something gets the skydns record before we
+		// kill the skyapi connection, but the connection doesn't come in till
+		// after hw.wait() runs
+		time.Sleep(500 * time.Millisecond)
+	}
+	hw.wait()
+	time.Sleep(50 * time.Millisecond)
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
@@ -391,24 +418,27 @@ func (g *GenAPI) doLever() {
 	g.Lever.Parse()
 }
 
-func (g *GenAPI) doSkyAPI() {
+func (g *GenAPI) doSkyAPI() chan struct{} {
 	skyapiAddr, _ := g.Lever.ParamStr("--skyapi-addr")
 	if skyapiAddr == "" {
-		return
+		return nil
 	}
 
 	skyapiAddr = srvclient.MaybeSRV(skyapiAddr)
 	kv := llog.KV{"skyapiAddr": skyapiAddr, "listenAddr": g.ListenAddr}
 	llog.Info("connecting to skyapi", kv)
+	stopCh := make(chan struct{})
 	go func() {
 		kv["err"] = client.ProvideOpts(client.Opts{
 			SkyAPIAddr:        skyapiAddr,
 			Service:           g.Name,
 			ThisAddr:          g.ListenAddr,
 			ReconnectAttempts: -1,
+			StopCh:            stopCh,
 		})
 		llog.Fatal("skyapi giving up reconnecting", kv)
 	}()
+	return stopCh
 }
 
 func (g *GenAPI) initMongo() {
