@@ -368,6 +368,11 @@ func (g *GenAPI) doLever() {
 		o.DisallowConfigFile = true
 	}
 	g.Lever = lever.New(g.Name, o)
+	g.Lever.Add(lever.Param{
+		Name:        "--log-level",
+		Description: "Log level to run with. Available levels are: debug, info, warn, error, fatal",
+		Default:     "info",
+	})
 
 	if g.Mode == APIMode {
 		g.Lever.Add(lever.Param{
