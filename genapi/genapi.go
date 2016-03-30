@@ -77,6 +77,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -228,7 +229,6 @@ const (
 func (g *GenAPI) APIMode() {
 	g.Mode = APIMode
 	g.init()
-	h := g.RPC()
 
 	g.ListenAddr, _ = g.Lever.ParamStr("--listen-addr")
 
@@ -249,13 +249,19 @@ func (g *GenAPI) APIMode() {
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
 
+	mux := http.NewServeMux()
+	mux.Handle("/", g.RPC())
+	// The net/http/pprof package expects to be under /debug/pprof/, which is
+	// why we don't strip the prefix here
+	mux.Handle("/debug/pprof/", g.pprofHandler())
+
 	hw := &httpWaiter{
 		ch: make(chan struct{}, 1),
 	}
 
 	srv := &http.Server{
 		Addr:    g.ListenAddr,
-		Handler: hw.handler(h),
+		Handler: hw.handler(mux),
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -316,6 +322,16 @@ func (g *GenAPI) RPC() http.Handler {
 		}
 	}
 	return s
+}
+
+func (g *GenAPI) pprofHandler() http.Handler {
+	h := http.NewServeMux()
+	h.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
+	h.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
+	h.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
+	h.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+	h.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
+	return h
 }
 
 func (g *GenAPI) init() {
