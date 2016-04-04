@@ -81,8 +81,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/context"
 
 	"github.com/gorilla/rpc/v2"
 	"github.com/levenlabs/gatewayrpc"
@@ -214,6 +217,9 @@ type GenAPI struct {
 	// go-routine and know when it's started listening, if there's other steps
 	// you want to take after initialization has been done.
 	InitDoneCh chan bool
+
+	ctxs  map[*http.Request]context.Context
+	ctxsL sync.RWMutex
 }
 
 // The different possible Mode values for GenAPI
@@ -335,6 +341,7 @@ func (g *GenAPI) pprofHandler() http.Handler {
 }
 
 func (g *GenAPI) init() {
+	g.ctxs = map[*http.Request]context.Context{}
 	rpcutil.InstallCustomValidators()
 	g.doLever()
 
@@ -483,4 +490,50 @@ func (g *GenAPI) initRedis() {
 			"poolSize": redisPoolSize,
 		})
 	}
+}
+
+func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cn, ok := w.(http.CloseNotifier)
+		if !ok {
+			h.ServeHTTP(w, r)
+			return
+		}
+
+		reqCloseCh := cn.CloseNotify()
+		closeCh := make(chan struct{})
+		ctx, cancelFn := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-closeCh:
+			case <-reqCloseCh:
+			}
+			cancelFn()
+		}()
+
+		g.ctxsL.Lock()
+		g.ctxs[r] = ctx
+		g.ctxsL.Unlock()
+
+		h.ServeHTTP(w, r)
+		close(closeCh)
+
+		g.ctxsL.Lock()
+		delete(g.ctxs, r)
+		g.ctxsL.Unlock()
+	})
+}
+
+// RequestContext returns a context for the given request. The context will be
+// cancelled if the request is closed, and may possibly have a deadline on it as
+// well
+func (g *GenAPI) RequestContext(r *http.Request) context.Context {
+	g.ctxsL.RLock()
+	defer g.ctxsL.RUnlock()
+
+	ctx := g.ctxs[r]
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return ctx
 }
