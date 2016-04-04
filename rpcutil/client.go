@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 
+	"golang.org/x/net/context"
+	"golang.org/x/net/context/ctxhttp"
+
 	"github.com/gorilla/rpc/v2/json2"
 )
 
@@ -28,6 +31,10 @@ type JSONRPC2Opts struct {
 	// This is useful if there are other headers or setting you'd like to have
 	// on your request going out, such as X-Forwarded-For
 	BaseRequest *http.Request
+
+	// If set, this will be used as the context for http request being made.
+	// The call will respect the cancellation of the context
+	Context context.Context
 }
 
 // JSONPRC2RequestOpts is like JSONRPC2Request but it takes in a JSONRPC2Opts
@@ -73,7 +80,11 @@ func JSONRPC2CallOpts(opts JSONRPC2Opts, url string, res interface{}, method str
 		return err
 	}
 
-	resp, err := http.DefaultClient.Do(r)
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
+
+	resp, err := ctxhttp.Do(opts.Context, http.DefaultClient, r)
 	if err != nil {
 		return err
 	}
