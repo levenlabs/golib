@@ -481,6 +481,7 @@ func (g *GenAPI) initMongo() {
 func (g *GenAPI) initRedis() {
 	redisAddr, _ := g.ParamStr("--redis-addr")
 	redisPoolSize, _ := g.ParamInt("--redis-pool-size")
+	redisAddr = srvclient.MaybeSRV(redisAddr)
 	var err error
 	g.RedisInfo.Cmder, err = radixutil.DialMaybeCluster("tcp", redisAddr, redisPoolSize)
 
