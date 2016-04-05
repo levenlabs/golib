@@ -80,6 +80,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -333,6 +334,16 @@ func (g *GenAPI) RPC() http.Handler {
 func (g *GenAPI) pprofHandler() http.Handler {
 	h := http.NewServeMux()
 	h.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
+
+	// Even though Index handles this, this particular one won't work without
+	// setting the BlockProfileRate temporarily.
+	h.HandleFunc("/debug/pprof/block", func(w http.ResponseWriter, r *http.Request) {
+		runtime.SetBlockProfileRate(1)
+		time.Sleep(5 * time.Second)
+		pprof.Index(w, r)
+		runtime.SetBlockProfileRate(0)
+	})
+
 	h.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
 	h.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	h.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
