@@ -219,6 +219,11 @@ type GenAPI struct {
 	// you want to take after initialization has been done.
 	InitDoneCh chan bool
 
+	// When initialized, this channel will be closed when in APIMode and cleanup
+	// has been completed after a kill signal. This is useful if you have other
+	// cleanup you want to run after GenAPI is done.
+	DoneCh chan bool
+
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
 }
@@ -291,6 +296,10 @@ func (g *GenAPI) APIMode() {
 	}
 	hw.wait()
 	time.Sleep(50 * time.Millisecond)
+
+	if g.DoneCh != nil {
+		close(g.DoneCh)
+	}
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
