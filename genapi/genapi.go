@@ -219,6 +219,11 @@ type GenAPI struct {
 	// you want to take after initialization has been done.
 	InitDoneCh chan bool
 
+	// When initialized, this channel will be closed when in APIMode and cleanup
+	// has been completed after a kill signal. This is useful if you have other
+	// cleanup you want to run after GenAPI is done.
+	DoneCh chan bool
+
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
 }
@@ -291,6 +296,10 @@ func (g *GenAPI) APIMode() {
 	}
 	hw.wait()
 	time.Sleep(50 * time.Millisecond)
+
+	if g.DoneCh != nil {
+		close(g.DoneCh)
+	}
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
@@ -310,6 +319,8 @@ func (g *GenAPI) CLIMode() {
 // RPC returns an http.Handler which will handle the RPC calls made against it
 // for the GenAPI's Services
 func (g *GenAPI) RPC() http.Handler {
+	// TODO make gatewayrpc.Server have an option not to do its logging
+	// per-request, so we can do it in here with the proper KVs from the context
 	s := gatewayrpc.NewServer()
 	s.RegisterCodec(g.Codec, "application/json")
 	for _, service := range g.Services {
@@ -514,7 +525,11 @@ func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
 
 		reqCloseCh := cn.CloseNotify()
 		closeCh := make(chan struct{})
-		ctx, cancelFn := context.WithCancel(context.Background())
+		ctx := requestCtx(r)
+		if len(ContextKV(ctx)) == 0 {
+			ctx = ContextMergeKV(ctx, rpcutil.RequestKV(r))
+		}
+		ctx, cancelFn := context.WithCancel(ctx)
 		go func() {
 			select {
 			case <-closeCh:
@@ -548,4 +563,30 @@ func (g *GenAPI) RequestContext(r *http.Request) context.Context {
 		ctx = context.Background()
 	}
 	return ctx
+}
+
+// Call makes an rpc call, presumably to another genapi server but really it
+// only has to be a JSONRPC2 server. If it is another genapi server, however,
+// the given context will be propogated to it, as well as being used here as a
+// timeout if deadline is set on it. See rpcutil for more on how the rest of the
+// arguments work.
+//
+// Note that host can be a hostname, and address (host:port), or a url
+// (http[s]://host[:port])
+func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string, args interface{}) error {
+	// TODO add a SRVClient field on the GenAPI and use that in here
+	host = srvclient.MaybeSRVURL(host)
+
+	r, err := http.NewRequest("POST", host, nil)
+	if err != nil {
+		return err
+	}
+	ContextApply(r, ctx)
+
+	opts := rpcutil.JSONRPC2Opts{
+		BaseRequest: r,
+		Context:     ctx,
+	}
+
+	return rpcutil.JSONRPC2CallOpts(opts, host, res, method, args)
 }
