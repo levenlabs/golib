@@ -533,30 +533,36 @@ func (g *GenAPI) initMongo() {
 func (g *GenAPI) initRedis() {
 	redisAddr, _ := g.ParamStr("--redis-addr")
 	redisPoolSize, _ := g.ParamInt("--redis-pool-size")
+	kv := llog.KV{
+		"addr":     redisAddr,
+		"poolSize": redisPoolSize,
+	}
+
+	llog.Info("connecting to redis", kv)
 	var err error
 	g.RedisInfo.Cmder, err = radixutil.DialMaybeCluster("tcp", redisAddr, redisPoolSize)
 
 	if err != nil {
-		llog.Fatal("error connecting to redis", llog.KV{
-			"addr":     redisAddr,
-			"poolSize": redisPoolSize,
-		})
+		llog.Fatal("error connecting to redis", kv, llog.KV{"err": err})
 	}
 }
 
 func (g *GenAPI) initOkq() {
 	okqAddr, _ := g.ParamStr("--okq-addr")
 	okqPoolSize, _ := g.ParamInt("--okq-pool-size")
+	kv := llog.KV{
+		"addr":     okqAddr,
+		"poolSize": okqPoolSize,
+	}
 
 	// TODO use GenAPI's srvclient once it has one
 	timeout := 30 * time.Second
 	df := radixutil.SRVDialFunc(srvclient.DefaultSRVClient, timeout)
+
+	llog.Info("connecting to okq", kv)
 	p, err := pool.NewCustom("tcp", okqAddr, okqPoolSize, df)
 	if err != nil {
-		llog.Fatal("error connection to okq", llog.KV{
-			"addr":     okqAddr,
-			"poolSize": okqPoolSize,
-		})
+		llog.Fatal("error connection to okq", kv, llog.KV{"err": err})
 	}
 
 	g.OkqInfo.Client = &okq.Client{RedisPool: p, NotifyTimeout: timeout}
