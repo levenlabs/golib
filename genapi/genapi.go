@@ -96,6 +96,8 @@ import (
 	"github.com/levenlabs/golib/radixutil"
 	"github.com/levenlabs/golib/rpcutil"
 	"github.com/mediocregopher/lever"
+	"github.com/mediocregopher/okq-go.v2"
+	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/util"
 	"github.com/mediocregopher/skyapi/client"
 	"gopkg.in/mgo.v2"
@@ -161,6 +163,14 @@ type RedisInfo struct {
 	util.Cmder
 }
 
+// OkqInfo is used to tell the api to interact with a set of okq instances, and
+// also houses the Client for those instance.
+type OkqInfo struct {
+	// Populated by the api once a connection to okq is made, and can be used as
+	// such. Do not set manually
+	*okq.Client
+}
+
 // GenAPI is a type used to handle most of the generic logic we always implement
 // when making an RPC API endpoint.
 //
@@ -189,6 +199,9 @@ type GenAPI struct {
 
 	// If redis is intended to be used, this should be filled in.
 	*RedisInfo
+
+	// If okq is intended to be used, this should be filled in
+	*OkqInfo
 
 	// A function to run just after initializing connections to backing
 	// database. Meant for performing any initialization needed by the app.
@@ -392,6 +405,10 @@ func (g *GenAPI) init() {
 		g.initRedis()
 	}
 
+	if g.OkqInfo != nil {
+		g.initOkq()
+	}
+
 	if g.Codec == nil {
 		c := rpcutil.NewLLCodec()
 		c.ValidateInput = true
@@ -452,6 +469,19 @@ func (g *GenAPI) doLever() {
 		})
 	}
 
+	if g.OkqInfo != nil {
+		g.Lever.Add(lever.Param{
+			Name:        "--okq-addr",
+			Description: "Address of okq instance to use",
+			Default:     "127.0.0.1:4777",
+		})
+		g.Lever.Add(lever.Param{
+			Name:        "--okq-pool-size",
+			Description: "Number of connections to okq to initially make",
+			Default:     "10",
+		})
+	}
+
 	if Version != "" {
 		g.Lever.Add(lever.Param{
 			Name:        "--version",
@@ -503,7 +533,6 @@ func (g *GenAPI) initMongo() {
 func (g *GenAPI) initRedis() {
 	redisAddr, _ := g.ParamStr("--redis-addr")
 	redisPoolSize, _ := g.ParamInt("--redis-pool-size")
-	redisAddr = srvclient.MaybeSRV(redisAddr)
 	var err error
 	g.RedisInfo.Cmder, err = radixutil.DialMaybeCluster("tcp", redisAddr, redisPoolSize)
 
@@ -513,6 +542,24 @@ func (g *GenAPI) initRedis() {
 			"poolSize": redisPoolSize,
 		})
 	}
+}
+
+func (g *GenAPI) initOkq() {
+	okqAddr, _ := g.ParamStr("--okq-addr")
+	okqPoolSize, _ := g.ParamInt("--okq-pool-size")
+
+	// TODO use GenAPI's srvclient once it has one
+	timeout := 30 * time.Second
+	df := radixutil.SRVDialFunc(srvclient.DefaultSRVClient, timeout)
+	p, err := pool.NewCustom("tcp", okqAddr, okqPoolSize, df)
+	if err != nil {
+		llog.Fatal("error connection to okq", llog.KV{
+			"addr":     okqAddr,
+			"poolSize": okqPoolSize,
+		})
+	}
+
+	g.OkqInfo.Client = &okq.Client{RedisPool: p, NotifyTimeout: timeout}
 }
 
 func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
