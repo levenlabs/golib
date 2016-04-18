@@ -17,16 +17,24 @@ func (hw *httpWaiter) handler(h http.Handler) http.Handler {
 		hw.c++
 		hw.l.Unlock()
 
+		defer func() {
+			r := recover()
+			hw.l.Lock()
+			hw.c--
+			hw.l.Unlock()
+
+			select {
+			case hw.ch <- struct{}{}:
+			default:
+			}
+
+			if r != nil {
+				panic(r)
+			}
+		}()
+
 		h.ServeHTTP(w, r)
 
-		hw.l.Lock()
-		hw.c--
-		hw.l.Unlock()
-
-		select {
-		case hw.ch <- struct{}{}:
-		default:
-		}
 	})
 }
 
