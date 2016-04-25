@@ -59,7 +59,7 @@ func MustEnsureIndexes(db *mgo.Database, indexes ...Index) {
 func EnsureSession(addr string) *mgo.Session {
 	kv := llog.KV{"addr": addr}
 	llog.Info("dialing mongo", kv)
-	s, err := mgo.DialWithTimeout(addr, 5 * time.Second)
+	s, err := mgo.DialWithTimeout(addr, 5*time.Second)
 	if err != nil {
 		kv["err"] = err
 		llog.Fatal("error calling mgo.DialWithTimeout", kv)
