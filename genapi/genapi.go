@@ -103,7 +103,7 @@ import (
 	"gopkg.in/mgo.v2"
 )
 
-// This can be set using:
+// Version can be set using:
 //	-ldflags "-X github.com/levenlabs/golib/genapi.Version versionstring"
 // on the go build command. When this is done, the --version flag will be
 // available on the command-line and will print out whatever version string is
@@ -182,14 +182,26 @@ type GenAPI struct {
 	// command-line and in skyapi
 	Name string
 
-	// Required. The set of rpc service structs which this API will host. Must
-	// have at least one service in APIMode
+	// The set of rpc service structs which this API will host. Must have at
+	// least one service in APIMode
 	Services []interface{}
 
 	// Like Services, but these will not be registered with the underlying
 	// gateway library, and therefore will not show up in calls to
 	// "RPC.GetMethods"
 	HiddenServices []interface{}
+
+	// The mux which the rpc services will be added to. If not set a new one
+	// will be created and used. This can be used to provide extra functionality
+	// in conjunction with the RPC server, or completely in place of it.
+	//
+	// It is important that RPCEndpoint does *not* have a handler set in this
+	// mux, as GenAPI will be setting it itself.
+	Mux *http.ServeMux
+
+	// The http endpoint that the RPC handler for Services and HiddenServices
+	// will be attached to. Defaults to "/"
+	RPCEndpoint string
 
 	// Additional lever.Param structs which can be included in the lever parsing
 	LeverParams []lever.Param
@@ -274,11 +286,10 @@ func (g *GenAPI) APIMode() {
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
 
-	mux := http.NewServeMux()
-	mux.Handle("/", g.RPC())
+	g.Mux.Handle(g.RPCEndpoint, g.RPC())
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
-	mux.Handle("/debug/pprof/", g.pprofHandler())
+	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
 
 	hw := &httpWaiter{
 		ch: make(chan struct{}, 1),
@@ -286,7 +297,7 @@ func (g *GenAPI) APIMode() {
 
 	srv := &http.Server{
 		Addr:    g.ListenAddr,
-		Handler: hw.handler(mux),
+		Handler: hw.handler(g.Mux),
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -379,6 +390,14 @@ func (g *GenAPI) init() {
 	g.ctxs = map[*http.Request]context.Context{}
 	rpcutil.InstallCustomValidators()
 	g.doLever()
+
+	if g.RPCEndpoint == "" {
+		g.RPCEndpoint = "/"
+	}
+
+	if g.Mux == nil {
+		g.Mux = http.NewServeMux()
+	}
 
 	if g.Lever.ParamFlag("--version") {
 		v := Version

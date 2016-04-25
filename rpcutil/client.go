@@ -37,7 +37,7 @@ type JSONRPC2Opts struct {
 	Context context.Context
 }
 
-// JSONPRC2RequestOpts is like JSONRPC2Request but it takes in a JSONRPC2Opts
+// JSONRPC2RequestOpts is like JSONRPC2Request but it takes in a JSONRPC2Opts
 // struct to modify behavior
 func JSONRPC2RequestOpts(opts JSONRPC2Opts, urlStr, method string, body interface{}) (*http.Request, error) {
 	b, err := json2.EncodeClientRequest(method, body)
