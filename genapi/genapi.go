@@ -412,6 +412,7 @@ func (g *GenAPI) init() {
 	if g.Codec == nil {
 		c := rpcutil.NewLLCodec()
 		c.ValidateInput = true
+		c.RunInputApplicators = true
 		g.Codec = c
 	}
 
