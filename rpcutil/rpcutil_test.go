@@ -17,11 +17,13 @@ import (
 type TestRPC struct{}
 
 type TestArgs struct {
-	Foo int `validate:"min=0"`
+	Foo  int    `validate:"min=0"`
+	Foo2 string `apply:"trim"`
 }
 
 type TestRes struct {
-	Bar int
+	Bar  int
+	Bar2 string
 }
 
 func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
@@ -36,6 +38,7 @@ func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
 	}
 
 	res.Bar = args.Foo
+	res.Bar2 = args.Foo2
 	return nil
 }
 
@@ -53,14 +56,14 @@ func TestLLCodec(t *T) {
 
 	// First test that normal, non-error calls work
 	i := int(testutil.RandInt64())
-	args := TestArgs{i}
+	args := TestArgs{i, ""}
 	res := TestRes{}
 	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
 	assert.Equal(t, i, res.Bar)
 
 	// Test that an application defined error makes it back to the user. This
 	// should produce a WARN
-	args = TestArgs{-1}
+	args = TestArgs{-1, ""}
 	err := JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 1, Message: "Foo can't be -1"}, err)
 	time.Sleep(100 * time.Millisecond)
@@ -70,7 +73,7 @@ func TestLLCodec(t *T) {
 
 	// Test that a server defined error makes it back to the user. This should
 	// produce an ERROR
-	args = TestArgs{-2}
+	args = TestArgs{-2, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: -1, Message: "Server doesn't know what -2 is",
@@ -78,7 +81,7 @@ func TestLLCodec(t *T) {
 
 	// Test that an unknown error makes it back to the user. This should produce
 	// an ERROR
-	args = TestArgs{-3}
+	args = TestArgs{-3, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "unexpected internal server error: server can't even what",
@@ -91,17 +94,17 @@ func TestLLCodec(t *T) {
 	c.HideServerErrors = true
 	h = JSONRPC2Handler(c, TestRPC{})
 
-	args = TestArgs{-1}
+	args = TestArgs{-1, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 1, Message: "Foo can't be -1"}, err)
 
-	args = TestArgs{-2}
+	args = TestArgs{-2, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
 
-	args = TestArgs{-3}
+	args = TestArgs{-3, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
@@ -114,13 +117,13 @@ func TestLLCodec(t *T) {
 
 	// The normal test should still work
 	i = int(testutil.RandInt64())
-	args = TestArgs{i}
+	args = TestArgs{i, ""}
 	res = TestRes{}
 	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
 	assert.Equal(t, i, res.Bar)
 
 	// Anything under 0 should not validate
-	args = TestArgs{-1}
+	args = TestArgs{-1, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_BAD_PARAMS, Message: "Foo: less than min",
@@ -136,10 +139,10 @@ func TestLLCodec(t *T) {
 
 	// The normal test should not have changed
 	i = int(testutil.RandInt64())
-	args = TestArgs{i}
+	args = TestArgs{i, ""}
 	resm := map[string]interface{}{}
 	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoFoo", &args))
-	assert.Equal(t, 1, len(resm))
+	assert.Equal(t, 2, len(resm))
 	assert.Equal(t, float64(i), resm["Bar"])
 
 	// Now have it actually do something
@@ -151,10 +154,10 @@ func TestLLCodec(t *T) {
 	h = JSONRPC2Handler(c, TestRPC{})
 
 	i = int(testutil.RandInt64())
-	args = TestArgs{i}
+	args = TestArgs{i, ""}
 	resm = map[string]interface{}{}
 	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoFoo", &args))
-	assert.Equal(t, 2, len(resm))
+	assert.Equal(t, 3, len(resm))
 	assert.Equal(t, float64(i), resm["Bar"])
 	assert.Equal(t, "turtles", resm["Extra"])
 
@@ -162,8 +165,35 @@ func TestLLCodec(t *T) {
 	buf = bytes.NewBuffer(make([]byte, 0, 128))
 	llog.Out = buf
 
-	args = TestArgs{-4}
+	args = TestArgs{-4, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 2, Message: "Don't log this"}, err)
 	assert.Equal(t, 0, buf.Len())
+
+	// Test applicator, which ensures that Bar is trimmed
+	c = NewLLCodec()
+	c.RunInputApplicators = true
+	h = JSONRPC2Handler(c, TestRPC{})
+
+	// The normal call should not be trimmed
+	s := "a"
+	args = TestArgs{
+		Foo2: " " + s + " ",
+	}
+	res = TestRes{}
+	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
+	assert.Equal(t, s, res.Bar2)
+
+	// Test applicator off
+	c = NewLLCodec()
+	h = JSONRPC2Handler(c, TestRPC{})
+
+	// Input should not be trimmed
+	s = " a "
+	args = TestArgs{
+		Foo2: s,
+	}
+	res = TestRes{}
+	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
+	assert.Equal(t, s, res.Bar2)
 }

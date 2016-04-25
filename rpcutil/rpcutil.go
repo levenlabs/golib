@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/rpc/v2"
 	"github.com/gorilla/rpc/v2/json2"
+	"github.com/levenlabs/go-applicator"
 	"github.com/levenlabs/go-llog"
 )
 
@@ -85,6 +86,10 @@ type LLCodec struct {
 	// validate inputs to calls
 	ValidateInput bool
 
+	// If true the github.com/levenlabs/go-applicator package will be used to
+	// apply functions to your input fields
+	RunInputApplicators bool
+
 	// If set, once a non-error response is returned by an rpc endpoint this
 	// will be called and the result (if non-nil) will be inlined with the
 	// original response. The original response must encode to a json object for
@@ -144,6 +149,14 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		fn = llog.Info
 	}
 
+	if cr.c.RunInputApplicators {
+		if err := applicator.Apply(args); err != nil {
+			// presumably the error is an internal one, but leave the option
+			// for the function to return a json2.Error if they want
+			return err
+		}
+	}
+
 	if cr.c.ValidateInput {
 		if err := validator.Validate(args); err != nil {
 			return &json2.Error{
@@ -186,9 +199,11 @@ func (cr llCodecRequest) WriteResponse(w http.ResponseWriter, r interface{}) {
 
 	newR, err := cr.maybeInlineExtra(r)
 	if err != nil {
-		cr.kv["err"] = err
-		cr.kv["orig"], _ = json.Marshal(r)
-		llog.Error("jsonrpc could not inline extra", cr.kv)
+		kv := llog.KV{
+			"err": err,
+		}
+		kv["orig"], _ = json.Marshal(r)
+		llog.Error("jsonrpc could not inline extra", cr.kv, kv)
 	} else {
 		r = newR
 	}

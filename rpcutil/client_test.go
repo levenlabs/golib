@@ -14,7 +14,7 @@ func TestJSONRPC2Call(t *T) {
 	h := JSONRPC2Handler(json2.NewCodec(), TestRPC{})
 
 	i := int(testutil.RandInt64())
-	arg := TestArgs{i}
+	arg := TestArgs{i, ""}
 	res := TestRes{}
 	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &arg))
 	assert.Equal(t, i, res.Bar)
@@ -22,7 +22,7 @@ func TestJSONRPC2Call(t *T) {
 	serv := httptest.NewServer(h)
 
 	i = int(testutil.RandInt64())
-	arg = TestArgs{i}
+	arg = TestArgs{i, ""}
 	res = TestRes{}
 	require.Nil(t, JSONRPC2Call(serv.URL, &res, "TestRPC.DoFoo", &arg))
 	assert.Equal(t, i, res.Bar)
