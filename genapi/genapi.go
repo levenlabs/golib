@@ -80,6 +80,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -248,6 +249,15 @@ type GenAPI struct {
 	// has been completed after a kill signal. This is useful if you have other
 	// cleanup you want to run after GenAPI is done.
 	DoneCh chan bool
+
+	// Optional set of remote APIs (presumably GenAPIs, but that's not actually
+	// required) that this one will be calling. The key should be the name of
+	// the remote api, and the value should be the default address for it. Each
+	// one will have a configuration option added for its address (e.g. if
+	// "other-api" is in this list, then "--other-api-addr" will be a config
+	// option). Each key can be used as an argument to RemoteAPICaller to obtain
+	// a convenient function for communicating with other apis.
+	RemoteAPIs map[string]string
 
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
@@ -511,6 +521,14 @@ func (g *GenAPI) doLever() {
 		})
 	}
 
+	for rapi, raddr := range g.RemoteAPIs {
+		g.Lever.Add(lever.Param{
+			Name:        "--" + rapi + "-addr",
+			Description: "Address or hostname of a " + rapi + " instance",
+			Default:     raddr,
+		})
+	}
+
 	for _, p := range g.LeverParams {
 		g.Lever.Add(p)
 	}
@@ -662,4 +680,69 @@ func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string,
 	}
 
 	return rpcutil.JSONRPC2CallOpts(opts, host, res, method, args)
+}
+
+func (g *GenAPI) remoteAPIAddr(remoteAPI string) string {
+	addr, _ := g.ParamStr("--" + remoteAPI + "-addr")
+	if addr == "" {
+		llog.Fatal("no address defined", llog.KV{"api": remoteAPI})
+	}
+	return addr
+}
+
+// Caller provides a way of calling RPC methods against a pre-defined remote
+// endpoint. The Call method is essentially the same as GenAPI's Call method,
+// but doesn't take in a host parameter
+type Caller interface {
+	Call(ctx context.Context, res interface{}, method string, args interface{}) error
+}
+
+type caller struct {
+	g    *GenAPI
+	addr string
+}
+
+func (c caller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
+	return c.g.Call(ctx, res, c.addr, method, args)
+}
+
+// RemoteAPIAddr returns an address to use for the given remoteAPI (which must
+// be defined in RemoteAPIs). The address will have had SRV called on it
+// already. A Fatal will be thrown if no address has been provided for the
+// remote API
+func (g *GenAPI) RemoteAPIAddr(remoteAPI string) string {
+	// TODO add a SRVClient field on the GenAPI and use that in here
+	return srvclient.MaybeSRV(g.remoteAPIAddr(remoteAPI))
+}
+
+// RemoteAPICaller takes in the name of a remote API instance defined in the
+// RemoteAPIs field, and returns a function which can be used to make RPC calls
+// against it. The arguments to the returned function are essentially the same
+// as those to the Call method, sans the host argument. A Fatal will be thrown
+// if no address has been provided for the remote API
+func (g *GenAPI) RemoteAPICaller(remoteAPI string) Caller {
+	addr := g.remoteAPIAddr(remoteAPI)
+	return caller{g, addr}
+}
+
+// CallerStub provides a convenient way to make stubbed endpoints for testing
+type CallerStub func(method string, args interface{}) (interface{}, error)
+
+// Call implements the Call method for the Caller interface. It passed method
+// and args to the underlying CallerStub function. The returned interface from
+// that function is assigned to res (if the underlying types for them are
+// compatible). The passed in context is ignored.
+func (cs CallerStub) Call(_ context.Context, res interface{}, method string, args interface{}) error {
+	csres, err := cs(method, args)
+	if err != nil {
+		return err
+	}
+
+	if res == nil {
+		return nil
+	}
+
+	vres := reflect.ValueOf(res).Elem()
+	vres.Set(reflect.ValueOf(csres))
+	return nil
 }
