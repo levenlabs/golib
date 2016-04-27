@@ -74,6 +74,7 @@
 package genapi
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -172,6 +173,19 @@ type OkqInfo struct {
 	*okq.Client
 }
 
+// TLSInfo is used to tell the api to use TLS (e.g. https/ssl) when listening
+// for incoming requests
+type TLSInfo struct {
+	// If set to true then the config options for passing in cert files on the
+	// command-line will not be used, and instead the Certs field will be
+	// expected to be filled in manually during the Init function
+	FillCertsManually bool
+
+	// One or more certificates to use for TLS. Will be filled automatically if
+	// FillCertsManually is false
+	Certs []tls.Certificate
+}
+
 // GenAPI is a type used to handle most of the generic logic we always implement
 // when making an RPC API endpoint.
 //
@@ -213,8 +227,14 @@ type GenAPI struct {
 	// If redis is intended to be used, this should be filled in.
 	*RedisInfo
 
-	// If okq is intended to be used, this should be filled in
+	// If okq is intended to be used, this should be filled in.
 	*OkqInfo
+
+	// If TLS is intended to be used, this should be filled in. The Certs field
+	// of TLSInfo may be filled in during the Init function for convenience, but
+	// the struct itself must be initialized before any of the Mode methods are
+	// called
+	*TLSInfo
 
 	// A function to run just after initializing connections to backing
 	// database. Meant for performing any initialization needed by the app.
@@ -310,6 +330,12 @@ func (g *GenAPI) APIMode() {
 		Handler: hw.handler(g.Mux),
 	}
 
+	if g.TLSInfo != nil && g.ParamFlag("--tls") {
+		srv.TLSConfig = &tls.Config{
+			Certificates: g.TLSInfo.Certs,
+		}
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
@@ -393,7 +419,16 @@ func (g *GenAPI) pprofHandler() http.Handler {
 	h.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	h.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
 	h.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-	return h
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ipStr, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip := net.ParseIP(ipStr)
+		if ip == nil || !ip.IsLoopback() {
+			http.Error(w, "", 403) // forbidden
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (g *GenAPI) init() {
@@ -445,6 +480,26 @@ func (g *GenAPI) init() {
 		g.Codec = c
 	}
 
+	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && g.ParamFlag("--tls") {
+		certFiles, _ := g.ParamStrs("--tls-cert-file")
+		keyFiles, _ := g.ParamStrs("--tls-key-file")
+		if len(certFiles) == 0 {
+			llog.Fatal("no --tls-cert-file provided")
+		}
+		if len(certFiles) != len(keyFiles) {
+			llog.Fatal("number of --tls-cert-file must match number of --tls-key-file")
+		}
+		for i := range certFiles {
+			kv := llog.KV{"certFile": certFiles[i], "keyFile": keyFiles[i]}
+			llog.Info("loading tls cert", kv)
+			c, err := tls.LoadX509KeyPair(certFiles[i], keyFiles[i])
+			if err != nil {
+				llog.Fatal("failed to load tls cert", kv, llog.KV{"err": err})
+			}
+			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
+		}
+	}
+
 	if g.Init != nil {
 		g.Init(g)
 	}
@@ -472,6 +527,23 @@ func (g *GenAPI) doLever() {
 			Description: "[address]:port to listen for rpc requests on. If port is zero a port will be chosen randomly",
 			Default:     ":0",
 		})
+		if g.TLSInfo != nil {
+			g.Lever.Add(lever.Param{
+				Name:        "--tls",
+				Description: "If set, use TLS when listening for incoming requests",
+				Flag:        true,
+			})
+			if !g.TLSInfo.FillCertsManually {
+				g.Lever.Add(lever.Param{
+					Name:        "--tls-cert-file",
+					Description: "Certificate file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-key-file.",
+				})
+				g.Lever.Add(lever.Param{
+					Name:        "--tls-key-file",
+					Description: "Key file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-cert-file.",
+				})
+			}
+		}
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",
