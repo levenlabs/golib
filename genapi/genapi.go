@@ -279,6 +279,12 @@ type GenAPI struct {
 	// a convenient function for communicating with other apis.
 	RemoteAPIs map[string]string
 
+	// Optional set of Healthers which should be checked during a /health-check.
+	// These will be checked sequentially, and if any return an error that will
+	// be logged and the health check will return false. The key in the map is a
+	// name for the Healther which can be logged
+	Healthers map[string]Healther
+
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
 }
@@ -320,6 +326,7 @@ func (g *GenAPI) APIMode() {
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
 	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
+	g.Mux.Handle("/health-check", g.healthCheck())
 
 	hw := &httpWaiter{
 		ch: make(chan struct{}, 1),
@@ -327,7 +334,7 @@ func (g *GenAPI) APIMode() {
 
 	srv := &http.Server{
 		Addr:    g.ListenAddr,
-		Handler: hw.handler(g.Mux),
+		Handler: hw.handler(g.contextHandler(g.Mux)),
 	}
 
 	if g.TLSInfo != nil && g.ParamFlag("--tls") {
