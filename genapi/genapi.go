@@ -74,12 +74,14 @@
 package genapi
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -171,6 +173,19 @@ type OkqInfo struct {
 	*okq.Client
 }
 
+// TLSInfo is used to tell the api to use TLS (e.g. https/ssl) when listening
+// for incoming requests
+type TLSInfo struct {
+	// If set to true then the config options for passing in cert files on the
+	// command-line will not be used, and instead the Certs field will be
+	// expected to be filled in manually during the Init function
+	FillCertsManually bool
+
+	// One or more certificates to use for TLS. Will be filled automatically if
+	// FillCertsManually is false
+	Certs []tls.Certificate
+}
+
 // GenAPI is a type used to handle most of the generic logic we always implement
 // when making an RPC API endpoint.
 //
@@ -212,8 +227,14 @@ type GenAPI struct {
 	// If redis is intended to be used, this should be filled in.
 	*RedisInfo
 
-	// If okq is intended to be used, this should be filled in
+	// If okq is intended to be used, this should be filled in.
 	*OkqInfo
+
+	// If TLS is intended to be used, this should be filled in. The Certs field
+	// of TLSInfo may be filled in during the Init function for convenience, but
+	// the struct itself must be initialized before any of the Mode methods are
+	// called
+	*TLSInfo
 
 	// A function to run just after initializing connections to backing
 	// database. Meant for performing any initialization needed by the app.
@@ -248,6 +269,21 @@ type GenAPI struct {
 	// has been completed after a kill signal. This is useful if you have other
 	// cleanup you want to run after GenAPI is done.
 	DoneCh chan bool
+
+	// Optional set of remote APIs (presumably GenAPIs, but that's not actually
+	// required) that this one will be calling. The key should be the name of
+	// the remote api, and the value should be the default address for it. Each
+	// one will have a configuration option added for its address (e.g. if
+	// "other-api" is in this list, then "--other-api-addr" will be a config
+	// option). Each key can be used as an argument to RemoteAPICaller to obtain
+	// a convenient function for communicating with other apis.
+	RemoteAPIs map[string]string
+
+	// Optional set of Healthers which should be checked during a /health-check.
+	// These will be checked sequentially, and if any return an error that will
+	// be logged and the health check will return false. The key in the map is a
+	// name for the Healther which can be logged
+	Healthers map[string]Healther
 
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
@@ -290,6 +326,7 @@ func (g *GenAPI) APIMode() {
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
 	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
+	g.Mux.Handle("/health-check", g.healthCheck())
 
 	hw := &httpWaiter{
 		ch: make(chan struct{}, 1),
@@ -297,7 +334,13 @@ func (g *GenAPI) APIMode() {
 
 	srv := &http.Server{
 		Addr:    g.ListenAddr,
-		Handler: hw.handler(g.Mux),
+		Handler: hw.handler(g.contextHandler(g.Mux)),
+	}
+
+	if g.TLSInfo != nil && g.ParamFlag("--tls") {
+		srv.TLSConfig = &tls.Config{
+			Certificates: g.TLSInfo.Certs,
+		}
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -383,7 +426,16 @@ func (g *GenAPI) pprofHandler() http.Handler {
 	h.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	h.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
 	h.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-	return h
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ipStr, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip := net.ParseIP(ipStr)
+		if ip == nil || !ip.IsLoopback() {
+			http.Error(w, "", 403) // forbidden
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (g *GenAPI) init() {
@@ -435,6 +487,26 @@ func (g *GenAPI) init() {
 		g.Codec = c
 	}
 
+	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && g.ParamFlag("--tls") {
+		certFiles, _ := g.ParamStrs("--tls-cert-file")
+		keyFiles, _ := g.ParamStrs("--tls-key-file")
+		if len(certFiles) == 0 {
+			llog.Fatal("no --tls-cert-file provided")
+		}
+		if len(certFiles) != len(keyFiles) {
+			llog.Fatal("number of --tls-cert-file must match number of --tls-key-file")
+		}
+		for i := range certFiles {
+			kv := llog.KV{"certFile": certFiles[i], "keyFile": keyFiles[i]}
+			llog.Info("loading tls cert", kv)
+			c, err := tls.LoadX509KeyPair(certFiles[i], keyFiles[i])
+			if err != nil {
+				llog.Fatal("failed to load tls cert", kv, llog.KV{"err": err})
+			}
+			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
+		}
+	}
+
 	if g.Init != nil {
 		g.Init(g)
 	}
@@ -462,6 +534,23 @@ func (g *GenAPI) doLever() {
 			Description: "[address]:port to listen for rpc requests on. If port is zero a port will be chosen randomly",
 			Default:     ":0",
 		})
+		if g.TLSInfo != nil {
+			g.Lever.Add(lever.Param{
+				Name:        "--tls",
+				Description: "If set, use TLS when listening for incoming requests",
+				Flag:        true,
+			})
+			if !g.TLSInfo.FillCertsManually {
+				g.Lever.Add(lever.Param{
+					Name:        "--tls-cert-file",
+					Description: "Certificate file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-key-file.",
+				})
+				g.Lever.Add(lever.Param{
+					Name:        "--tls-key-file",
+					Description: "Key file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-cert-file.",
+				})
+			}
+		}
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",
@@ -508,6 +597,14 @@ func (g *GenAPI) doLever() {
 			Aliases:     []string{"-v"},
 			Description: "Print out version information for this binary",
 			Flag:        true,
+		})
+	}
+
+	for rapi, raddr := range g.RemoteAPIs {
+		g.Lever.Add(lever.Param{
+			Name:        "--" + rapi + "-addr",
+			Description: "Address or hostname of a " + rapi + " instance",
+			Default:     raddr,
 		})
 	}
 
@@ -661,4 +758,69 @@ func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string,
 	}
 
 	return rpcutil.JSONRPC2CallOpts(opts, host, res, method, args)
+}
+
+func (g *GenAPI) remoteAPIAddr(remoteAPI string) string {
+	addr, _ := g.ParamStr("--" + remoteAPI + "-addr")
+	if addr == "" {
+		llog.Fatal("no address defined", llog.KV{"api": remoteAPI})
+	}
+	return addr
+}
+
+// Caller provides a way of calling RPC methods against a pre-defined remote
+// endpoint. The Call method is essentially the same as GenAPI's Call method,
+// but doesn't take in a host parameter
+type Caller interface {
+	Call(ctx context.Context, res interface{}, method string, args interface{}) error
+}
+
+type caller struct {
+	g    *GenAPI
+	addr string
+}
+
+func (c caller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
+	return c.g.Call(ctx, res, c.addr, method, args)
+}
+
+// RemoteAPIAddr returns an address to use for the given remoteAPI (which must
+// be defined in RemoteAPIs). The address will have had SRV called on it
+// already. A Fatal will be thrown if no address has been provided for the
+// remote API
+func (g *GenAPI) RemoteAPIAddr(remoteAPI string) string {
+	// TODO add a SRVClient field on the GenAPI and use that in here
+	return srvclient.MaybeSRV(g.remoteAPIAddr(remoteAPI))
+}
+
+// RemoteAPICaller takes in the name of a remote API instance defined in the
+// RemoteAPIs field, and returns a function which can be used to make RPC calls
+// against it. The arguments to the returned function are essentially the same
+// as those to the Call method, sans the host argument. A Fatal will be thrown
+// if no address has been provided for the remote API
+func (g *GenAPI) RemoteAPICaller(remoteAPI string) Caller {
+	addr := g.remoteAPIAddr(remoteAPI)
+	return caller{g, addr}
+}
+
+// CallerStub provides a convenient way to make stubbed endpoints for testing
+type CallerStub func(method string, args interface{}) (interface{}, error)
+
+// Call implements the Call method for the Caller interface. It passed method
+// and args to the underlying CallerStub function. The returned interface from
+// that function is assigned to res (if the underlying types for them are
+// compatible). The passed in context is ignored.
+func (cs CallerStub) Call(_ context.Context, res interface{}, method string, args interface{}) error {
+	csres, err := cs(method, args)
+	if err != nil {
+		return err
+	}
+
+	if res == nil {
+		return nil
+	}
+
+	vres := reflect.ValueOf(res).Elem()
+	vres.Set(reflect.ValueOf(csres))
+	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"sync"
+
+	"golang.org/x/net/context"
 )
 
 // HTTPProxy implements an http reverse proxy. It is obstensibly a simple
@@ -38,7 +40,29 @@ func (h *HTTPProxy) init() {
 }
 
 func (h *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.ServeHTTPCtx(context.Background(), w, r)
+}
+
+// ServeHTTPCtx will do the proxying of the given request and write the response
+// to the ResponseWriter. ctx can be used to cancel the request mid-way.
+func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	h.init()
+	// We only do the cancellation logic if the Cancel channel hasn't been set
+	// on the Request already. If it has, then some other process is liable to
+	// close it also, which would cause a panic
+	if r.Cancel == nil {
+		cancelCh := make(chan struct{})
+		r.Cancel = cancelCh
+		doneCh := make(chan struct{})
+		defer close(doneCh) // so no matter what the go-routine exits
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-doneCh:
+			}
+			close(cancelCh)
+		}()
+	}
 	AddProxyXForwardedFor(r, r)
 	h.rp.ServeHTTP(w, r)
 }
