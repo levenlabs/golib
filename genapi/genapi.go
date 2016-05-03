@@ -337,10 +337,13 @@ func (g *GenAPI) APIMode() {
 		Handler: hw.handler(g.contextHandler(g.Mux)),
 	}
 
+	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
 	if g.TLSInfo != nil && g.ParamFlag("--tls") {
 		srv.TLSConfig = &tls.Config{
 			Certificates: g.TLSInfo.Certs,
 		}
+		srv.TLSConfig.BuildNameToCertificate()
+		netln = tls.NewListener(netln, srv.TLSConfig)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -348,7 +351,7 @@ func (g *GenAPI) APIMode() {
 
 	go func() {
 		llog.Info("starting rpc listening", kv)
-		srv.Serve(tcpKeepAliveListener{ln.(*net.TCPListener)})
+		srv.Serve(netln)
 	}()
 
 	<-sigCh
