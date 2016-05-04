@@ -2,10 +2,12 @@ package rpcutil
 
 import (
 	"bytes"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"sync"
 
 	"golang.org/x/net/context"
@@ -68,12 +70,48 @@ func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *
 }
 
 // BufferedResponseWriter is a wrapper around a real ResponseWriter which
-// actually writes all data to the buffer in the struct.
+// actually writes all data to the buffer in the struct. It also catches calls
+// to WriteHeader. Once writing is done, the Buffer can be inspected and
+// modified. When ActuallyWrite is called all headers will be written to the
+// ResponseWriter (with corrected Content-Length if Buffer was changed),
+// followed by the Buffer as the body.
 type BufferedResponseWriter struct {
 	http.ResponseWriter
 	Buffer *bytes.Buffer
+
+	code int
 }
 
-func (brw BufferedResponseWriter) Write(b []byte) (int, error) {
+// NewBufferedResponseWriter returns an initialized BufferedResponseWriter,
+// which will catch writes going to the given ResponseWriter
+func NewBufferedResponseWriter(rw http.ResponseWriter) *BufferedResponseWriter {
+	return &BufferedResponseWriter{
+		ResponseWriter: rw,
+		Buffer:         new(bytes.Buffer),
+	}
+}
+
+// WriteHeader catches the call to WriteHeader and doesn't actually do anything,
+// except store the given code for later use when ActuallyWrite is called
+func (brw *BufferedResponseWriter) WriteHeader(code int) {
+	brw.code = code
+}
+
+func (brw *BufferedResponseWriter) Write(b []byte) (int, error) {
 	return brw.Buffer.Write(b)
+}
+
+// ActuallyWrite takes all the buffered data and actually writes to the wrapped
+// ResponseWriter. Returns the number of bytes written as the body (essentially
+// the length of Buffer)
+func (brw *BufferedResponseWriter) ActuallyWrite() (int64, error) {
+	rw := brw.ResponseWriter
+	rw.Header().Set("Content-Length", strconv.Itoa(brw.Buffer.Len()))
+
+	// only call WriteHeader if it was called on brw
+	if brw.code > 0 {
+		rw.WriteHeader(brw.code)
+	}
+
+	return io.Copy(rw, brw.Buffer)
 }
