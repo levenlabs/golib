@@ -46,3 +46,32 @@ func TestCallerStub(t *T) {
 	})
 	assert.Nil(t, stub.Call(nil, nil, method, args))
 }
+
+func TestInit(t *T) {
+	i := 0
+	var g *GenAPI
+	g = &GenAPI{
+		Init: func(g2 *GenAPI) {
+			assert.Equal(t, g, g2)
+			assert.Equal(t, 0, i)
+			assert.Equal(t, TestMode, g2.Mode)
+			i++
+		},
+	}
+	g.AppendInit(func(g2 *GenAPI) {
+		assert.Equal(t, g, g2)
+		assert.Equal(t, 1, i)
+		i++
+	})
+	g.AppendInit(func(g2 *GenAPI) {
+		assert.Equal(t, g, g2)
+		assert.Equal(t, 2, i)
+		i++
+	})
+	g.TestMode()
+	assert.Equal(t, 3, i)
+
+	assert.Panics(t, func() {
+		g.AppendInit(func(g2 *GenAPI) {})
+	})
+}

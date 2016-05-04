@@ -128,6 +128,9 @@ type MongoInfo struct {
 	session *mgo.Session
 }
 
+// InitFunc is just a helper for a function that accepts a GenAPI pointer
+type InitFunc func(*GenAPI)
+
 // WithDB is similar to mgoutil.SessionHelper's WithDB, see those docs for more
 // details
 func (m *MongoInfo) WithDB(fn func(*mgo.Database)) {
@@ -238,7 +241,10 @@ type GenAPI struct {
 
 	// A function to run just after initializing connections to backing
 	// database. Meant for performing any initialization needed by the app.
-	Init func(*GenAPI)
+	// This is called before any AppendInit functions
+	Init InitFunc
+
+	inits []InitFunc
 
 	// May be set if a codec with different parameters is required.
 	// If not set an rpcutil.LLCodec with default options will be used.
@@ -386,6 +392,16 @@ func (g *GenAPI) CLIMode() {
 	g.init()
 }
 
+// AppendInit adds a function to be called when GenAPI is initialized. It will
+// be called after GenAPI's Init() and after any previous functions that were
+// appended
+func (g *GenAPI) AppendInit(f InitFunc) {
+	if g.Mode != "" {
+		panic("genapi: AppendInit was called after Init has already been ran")
+	}
+	g.inits = append(g.inits, f)
+}
+
 // RPC returns an http.Handler which will handle the RPC calls made against it
 // for the GenAPI's Services
 func (g *GenAPI) RPC() http.Handler {
@@ -511,7 +527,11 @@ func (g *GenAPI) init() {
 	}
 
 	if g.Init != nil {
+		// make sure the struct's Init is always called first
 		g.Init(g)
+	}
+	for _, f := range g.inits {
+		f(g)
 	}
 
 	if g.InitDoneCh != nil {
