@@ -309,25 +309,6 @@ func (g *GenAPI) APIMode() {
 	g.Mode = APIMode
 	g.init()
 
-	g.ListenAddr, _ = g.Lever.ParamStr("--listen-addr")
-
-	// We listen on a random port if none is given. We have to jump through
-	// some hoops to actually do this, most of these hoops being copied from
-	// what ListenAndServe is doing in net/http
-
-	kv := llog.KV{"addr": g.ListenAddr}
-	llog.Info("creating listen socket", kv)
-	ln, err := net.Listen("tcp", g.ListenAddr)
-	if err != nil {
-		kv["err"] = err
-		llog.Fatal("failed creating listen socket", kv)
-	}
-	g.ListenAddr = ln.Addr().String()
-	kv["addr"] = g.ListenAddr
-
-	// Once ListenAddr is populated with the final value we can call doSkyAPI
-	skyapiStopCh := g.doSkyAPI()
-
 	g.Mux.Handle(g.RPCEndpoint, g.RPC())
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
@@ -337,29 +318,34 @@ func (g *GenAPI) APIMode() {
 	hw := &httpWaiter{
 		ch: make(chan struct{}, 1),
 	}
+	h := hw.handler(g.contextHandler(g.Mux))
 
-	srv := &http.Server{
-		Addr:    g.ListenAddr,
-		Handler: hw.handler(g.contextHandler(g.Mux)),
-	}
-
-	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
-	if g.TLSInfo != nil && g.ParamFlag("--tls") {
-		srv.TLSConfig = &tls.Config{
-			Certificates: g.TLSInfo.Certs,
+	addrs, _ := g.Lever.ParamStrs("--listen-addr")
+	for _, addr := range addrs {
+		// empty addr might get passed in to disable --listen-addr
+		if addr == "" {
+			continue
 		}
-		srv.TLSConfig.BuildNameToCertificate()
-		netln = tls.NewListener(netln, srv.TLSConfig)
+		g.srv(h, addr, false)
 	}
+
+	if g.TLSInfo != nil {
+		addrs, _ := g.Lever.ParamStrs("--tls-listen-addr")
+		for _, addr := range addrs {
+			if addr == "" {
+				continue
+			}
+			g.srv(h, addr, true)
+		}
+	}
+
+	// Once ListenAddr is populated with the final value we can call doSkyAPI
+	skyapiStopCh := g.doSkyAPI()
+
+	llog.Info("waiting for close signal")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	go func() {
-		llog.Info("starting rpc listening", kv)
-		srv.Serve(netln)
-	}()
-
 	<-sigCh
 	llog.Info("signal received, stopping")
 	if skyapiStopCh != nil {
@@ -376,6 +362,43 @@ func (g *GenAPI) APIMode() {
 	if g.DoneCh != nil {
 		close(g.DoneCh)
 	}
+}
+
+// This starts a go-routine which will do the actual serving of the handler
+func (g *GenAPI) srv(h http.Handler, addr string, doTLS bool) {
+	kv := llog.KV{"addr": addr, "tls": doTLS}
+	llog.Info("creating listen socket", kv)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		llog.Fatal("failed creating listen socket", kv.Set("err", err))
+	}
+	actualAddr := ln.Addr().String()
+	kv["addr"] = actualAddr
+
+	// If this is the first address specified set ListenAddr to that, so it will
+	// be advertised with skyapi
+	if g.ListenAddr == "" {
+		g.ListenAddr = actualAddr
+	}
+
+	srv := &http.Server{
+		Addr:    actualAddr,
+		Handler: h,
+	}
+
+	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
+	if doTLS {
+		srv.TLSConfig = &tls.Config{
+			Certificates: g.TLSInfo.Certs,
+		}
+		srv.TLSConfig.BuildNameToCertificate()
+		netln = tls.NewListener(netln, srv.TLSConfig)
+	}
+
+	go func() {
+		llog.Info("starting rpc listening", kv)
+		srv.Serve(netln)
+	}()
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
@@ -506,7 +529,8 @@ func (g *GenAPI) init() {
 		g.Codec = c
 	}
 
-	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && g.ParamFlag("--tls") {
+	tlsAddrs, _ := g.ParamStrs("--tls-listen-addr")
+	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && len(tlsAddrs) > 0 {
 		certFiles, _ := g.ParamStrs("--tls-cert-file")
 		keyFiles, _ := g.ParamStrs("--tls-key-file")
 		if len(certFiles) == 0 {
@@ -553,15 +577,15 @@ func (g *GenAPI) doLever() {
 
 	if g.Mode == APIMode {
 		g.Lever.Add(lever.Param{
-			Name:        "--listen-addr",
-			Description: "[address]:port to listen for rpc requests on. If port is zero a port will be chosen randomly",
-			Default:     ":0",
+			Name:         "--listen-addr",
+			Description:  "[address]:port to listen for requests on. If port is zero a port will be chosen randomly",
+			DefaultMulti: []string{":0"},
 		})
 		if g.TLSInfo != nil {
 			g.Lever.Add(lever.Param{
-				Name:        "--tls",
-				Description: "If set, use TLS when listening for incoming requests",
-				Flag:        true,
+				Name:         "--tls-listen-addr",
+				Description:  "[address]:port to listen for https requests on. If port is zero a port will be chosen randomly",
+				DefaultMulti: []string{},
 			})
 			if !g.TLSInfo.FillCertsManually {
 				g.Lever.Add(lever.Param{
@@ -617,7 +641,7 @@ func (g *GenAPI) doLever() {
 	if Version != "" {
 		g.Lever.Add(lever.Param{
 			Name:        "--version",
-			Aliases:     []string{"-v"},
+			Aliases:     []string{"-V"},
 			Description: "Print out version information for this binary",
 			Flag:        true,
 		})
