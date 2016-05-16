@@ -782,10 +782,12 @@ func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
 		}
 		ctx, cancelFn := context.WithCancel(ctx)
 		go func() {
-			select {
-			case <-closeCh:
-			case <-reqCloseCh:
-			}
+			<-closeCh
+			// We're trusting that reqCloseCh is *always* written to here.
+			// That's in the hands of the net/http package though, and the docs
+			// are not super clear about it, so that may turn out to not be the
+			// case. if it's not, we should add a time.After or something here
+			<-reqCloseCh
 			cancelFn()
 		}()
 
