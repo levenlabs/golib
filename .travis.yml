@@ -3,6 +3,8 @@ go:
   - 1.5
   - tip
 script:
-  - go test -race -v -bench=.
+  - go test -race -v -bench=. ./...
+services:
+  - redis-server
 notifications:
   email: false
