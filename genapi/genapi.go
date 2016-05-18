@@ -245,7 +245,9 @@ type GenAPI struct {
 	Mux *http.ServeMux
 
 	// The http endpoint that the RPC handler for Services and HiddenServices
-	// will be attached to. Defaults to "/"
+	// will be attached to. Defaults to "/". If you set this to "_", no rpc
+	// listener will be set up and its up to you to add the handler from RPC()
+	// to the mux for whatever path you need.
 	RPCEndpoint string
 
 	// Additional lever.Param structs which can be included in the lever parsing
@@ -341,7 +343,9 @@ func (g *GenAPI) APIMode() {
 	g.Mode = APIMode
 	g.init()
 
-	g.Mux.Handle(g.RPCEndpoint, g.RPC())
+	if g.RPCEndpoint != "_" {
+		g.Mux.Handle(g.RPCEndpoint, g.RPC())
+	}
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
 	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
