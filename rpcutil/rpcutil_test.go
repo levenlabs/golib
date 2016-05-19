@@ -1,17 +1,19 @@
 package rpcutil
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"net/http"
 	. "testing"
 
-	"bytes"
+	"time"
+
 	"github.com/gorilla/rpc/v2/json2"
 	"github.com/levenlabs/go-llog"
 	"github.com/levenlabs/golib/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"time"
 )
 
 type TestRPC struct{}
@@ -45,11 +47,29 @@ func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
 func TestLLCodec(t *T) {
 	llog.SetLevelFromString("WARN")
 	oldOut := llog.Out
-	buf := bytes.NewBuffer(make([]byte, 0, 128))
-	llog.Out = buf
+
+	r, w := io.Pipe()
+	buf := bufio.NewReader(r)
+	llog.Out = w
 	defer func() {
 		llog.Out = oldOut
 	}()
+
+	assertLog := func(severity, contains string) {
+		doneCh := make(chan struct{})
+		go func() {
+			select {
+			case <-time.After(2 * time.Second):
+				assert.Fail(t, "timed out waiting for log %q:%q", severity, contains)
+			case <-doneCh:
+			}
+		}()
+		str, err := buf.ReadString('\n')
+		require.Nil(t, err)
+		assert.Contains(t, str, severity)
+		assert.Contains(t, str, contains)
+		close(doneCh)
+	}
 
 	c := NewLLCodec()
 	h := JSONRPC2Handler(c, TestRPC{})
@@ -66,10 +86,7 @@ func TestLLCodec(t *T) {
 	args = TestArgs{-1, ""}
 	err := JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 1, Message: "Foo can't be -1"}, err)
-	time.Sleep(100 * time.Millisecond)
-	errStr, err := buf.ReadString('\n')
-	require.Nil(t, err)
-	assert.Contains(t, errStr, "Foo can't be -1")
+	assertLog("WARN", "Foo can't be -1")
 
 	// Test that a server defined error makes it back to the user. This should
 	// produce an ERROR
@@ -78,6 +95,7 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, &json2.Error{
 		Code: -1, Message: "Server doesn't know what -2 is",
 	}, err)
+	assertLog("ERROR", "jsonrpc internal server error")
 
 	// Test that an unknown error makes it back to the user. This should produce
 	// an ERROR
@@ -86,6 +104,7 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "unexpected internal server error: server can't even what",
 	}, err)
+	assertLog("ERROR", "jsonrpc internal server error")
 
 	// Now we disable showing internal server messages and repeat the last three
 	// tests. The first should still return its error, the second two should
@@ -97,18 +116,21 @@ func TestLLCodec(t *T) {
 	args = TestArgs{-1, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 1, Message: "Foo can't be -1"}, err)
+	assertLog("WARN", "Foo can't be -1")
 
 	args = TestArgs{-2, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
+	assertLog("ERROR", "jsonrpc internal server error")
 
 	args = TestArgs{-3, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
+	assertLog("ERROR", "jsonrpc internal server error")
 
 	// Test validation, which ensures that Foo is >= 0
 	c = NewLLCodec()
@@ -128,6 +150,7 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_BAD_PARAMS, Message: "Foo: less than min",
 	}, err)
+	assertLog("WARN", "Foo: less than min")
 
 	// Test ResponseInliner, first returning nil to confirm that doesn't do
 	// anything
@@ -162,13 +185,14 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, "turtles", resm["Extra"])
 
 	// Test QuietErrors
-	buf = bytes.NewBuffer(make([]byte, 0, 128))
-	llog.Out = buf
-
 	args = TestArgs{-4, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{Code: 2, Message: "Don't log this"}, err)
-	assert.Equal(t, 0, buf.Len())
+
+	// Ghetto way of making sure the previous thing wasn't logged
+	time.Sleep(100 * time.Millisecond)
+	llog.Warn("test warning")
+	assertLog("WARN", "test warning")
 
 	// Test applicator, which ensures that Bar is trimmed
 	c = NewLLCodec()
