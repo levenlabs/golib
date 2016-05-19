@@ -1,10 +1,13 @@
 package genapi
 
 import (
+	"os"
 	. "testing"
 
 	"github.com/levenlabs/golib/testutil"
+	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCallerStub(t *T) {
@@ -74,4 +77,42 @@ func TestInit(t *T) {
 	assert.Panics(t, func() {
 		g.AppendInit(func(g2 *GenAPI) {})
 	})
+}
+
+func TestSRVClientPreprocess(t *T) {
+	dc := testutil.RandStr()
+	os.Setenv("DATACENTER", dc)
+	g := &GenAPI{}
+	g.TestMode()
+	dcHash := g.getDCHash()
+	m := new(dns.Msg)
+	m.Answer = []dns.RR{
+		// The correct server with the local DC
+		dns.RR(&dns.SRV{
+			Target:   dcHash + "-" + testutil.RandStr(),
+			Port:     uint16(80),
+			Priority: uint16(5),
+		}),
+		// A server with a different DC
+		dns.RR(&dns.SRV{
+			Target:   testutil.RandStr() + "-" + testutil.RandStr(),
+			Port:     uint16(80),
+			Priority: uint16(5),
+		}),
+		// A server with no DC
+		dns.RR(&dns.SRV{
+			Target:   testutil.RandStr(),
+			Port:     uint16(80),
+			Priority: uint16(5),
+		}),
+	}
+
+	g.srvClientPreprocess(m)
+
+	correctPri := []uint16{uint16(4), uint16(5), uint16(5)}
+	for i := range m.Answer {
+		ansSRV, ok := m.Answer[i].(*dns.SRV)
+		require.True(t, ok)
+		assert.Equal(t, ansSRV.Priority, correctPri[i])
+	}
 }

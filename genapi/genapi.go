@@ -74,6 +74,7 @@
 package genapi
 
 import (
+	"crypto/sha1"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -84,6 +85,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -102,6 +104,7 @@ import (
 	"github.com/mediocregopher/radix.v2/pool"
 	"github.com/mediocregopher/radix.v2/util"
 	"github.com/mediocregopher/skyapi/client"
+	"github.com/miekg/dns"
 	"gopkg.in/mgo.v2"
 )
 
@@ -515,6 +518,8 @@ func (g *GenAPI) init() {
 	g.SRVClient.EnableCacheLast()
 	g.doLever()
 
+	g.SRVClient.Preprocess = g.srvClientPreprocess
+
 	if g.RPCEndpoint == "" {
 		g.RPCEndpoint = "/"
 	}
@@ -605,6 +610,12 @@ func (g *GenAPI) doLever() {
 		Default:     "info",
 	})
 
+	g.Lever.Add(lever.Param{
+		Name:        "--datacenter",
+		Description: "What datacenter the service is running in",
+		Default:     os.Getenv("DATACENTER"),
+	})
+
 	if g.Mode == APIMode {
 		g.Lever.Add(lever.Param{
 			Name:         "--listen-addr",
@@ -692,11 +703,40 @@ func (g *GenAPI) doLever() {
 	g.Lever.Parse()
 }
 
+func (g *GenAPI) srvClientPreprocess(m *dns.Msg) {
+	dc := g.getDCHash()
+	if dc == "" {
+		return
+	}
+	for i := range m.Answer {
+		if ansSRV, ok := m.Answer[i].(*dns.SRV); ok {
+			tar := ansSRV.Target
+			if strings.HasPrefix(tar, dc) {
+				if ansSRV.Priority < 2 {
+					ansSRV.Priority = uint16(0)
+				} else {
+					ansSRV.Priority = ansSRV.Priority - 1
+				}
+			}
+		}
+	}
+}
+
+func (g *GenAPI) getDCHash() string {
+	dc, _ := g.Lever.ParamStr("--datacenter")
+	if dc == "" {
+		return ""
+	}
+	sha1Bytes := sha1.Sum([]byte(dc))
+	return fmt.Sprintf("%x", sha1Bytes)[:20]
+}
+
 func (g *GenAPI) doSkyAPI() chan struct{} {
 	skyapiAddr, _ := g.Lever.ParamStr("--skyapi-addr")
 	if skyapiAddr == "" {
 		return nil
 	}
+	dc := g.getDCHash()
 
 	kv := llog.KV{"skyapiAddr": skyapiAddr, "listenAddr": g.ListenAddr}
 	llog.Info("connecting to skyapi", kv)
@@ -708,6 +748,7 @@ func (g *GenAPI) doSkyAPI() chan struct{} {
 			ThisAddr:          g.ListenAddr,
 			ReconnectAttempts: -1,
 			StopCh:            stopCh,
+			Prefix:            dc,
 		})
 		llog.Fatal("skyapi giving up reconnecting", kv)
 	}()
