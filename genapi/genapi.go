@@ -315,6 +315,11 @@ type GenAPI struct {
 	// name for the Healther which can be logged
 	Healthers map[string]Healther
 
+	// SRVClient which will be used by GenAPI when resolving requests, and which
+	// can also be used by other processes as well. This should only be modified
+	// during the init function
+	srvclient.SRVClient
+
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
 }
@@ -350,7 +355,7 @@ func (g *GenAPI) APIMode() {
 		if addr == "" {
 			continue
 		}
-		g.srv(h, addr, false)
+		g.serve(h, addr, false)
 	}
 
 	if g.TLSInfo != nil {
@@ -359,7 +364,7 @@ func (g *GenAPI) APIMode() {
 			if addr == "" {
 				continue
 			}
-			g.srv(h, addr, true)
+			g.serve(h, addr, true)
 		}
 	}
 
@@ -389,7 +394,7 @@ func (g *GenAPI) APIMode() {
 }
 
 // This starts a go-routine which will do the actual serving of the handler
-func (g *GenAPI) srv(h http.Handler, addr string, doTLS bool) {
+func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
 	kv := llog.KV{"addr": addr, "tls": doTLS}
 	llog.Info("creating listen socket", kv)
 	ln, err := net.Listen("tcp", addr)
@@ -507,6 +512,7 @@ func (g *GenAPI) pprofHandler() http.Handler {
 func (g *GenAPI) init() {
 	g.ctxs = map[*http.Request]context.Context{}
 	rpcutil.InstallCustomValidators()
+	g.SRVClient.EnableCacheLast()
 	g.doLever()
 
 	if g.RPCEndpoint == "" {
@@ -754,8 +760,7 @@ func (g *GenAPI) initOkq() {
 	if g.OkqInfo.Timeout == 0 {
 		g.OkqInfo.Timeout = 30 * time.Second
 	}
-	// TODO use GenAPI's srvclient once it has one
-	df := radixutil.SRVDialFunc(srvclient.DefaultSRVClient, g.OkqInfo.Timeout)
+	df := radixutil.SRVDialFunc(g.SRVClient, g.OkqInfo.Timeout)
 
 	llog.Info("connecting to okq", kv)
 	p, err := pool.NewCustom("tcp", okqAddr, okqPoolSize, df)
@@ -826,8 +831,7 @@ func (g *GenAPI) RequestContext(r *http.Request) context.Context {
 // Note that host can be a hostname, and address (host:port), or a url
 // (http[s]://host[:port])
 func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string, args interface{}) error {
-	// TODO add a SRVClient field on the GenAPI and use that in here
-	host = srvclient.MaybeSRVURL(host)
+	host = g.SRVClient.MaybeSRVURL(host)
 
 	r, err := http.NewRequest("POST", host, nil)
 	if err != nil {
@@ -872,8 +876,7 @@ func (c caller) Call(ctx context.Context, res interface{}, method string, args i
 // already. A Fatal will be thrown if no address has been provided for the
 // remote API
 func (g *GenAPI) RemoteAPIAddr(remoteAPI string) string {
-	// TODO add a SRVClient field on the GenAPI and use that in here
-	return srvclient.MaybeSRV(g.remoteAPIAddr(remoteAPI))
+	return g.SRVClient.MaybeSRV(g.remoteAPIAddr(remoteAPI))
 }
 
 // RemoteAPICaller takes in the name of a remote API instance defined in the
