@@ -711,7 +711,7 @@ func (g *GenAPI) srvClientPreprocess(m *dns.Msg) {
 	for i := range m.Answer {
 		if ansSRV, ok := m.Answer[i].(*dns.SRV); ok {
 			tar := ansSRV.Target
-			if strings.HasPrefix(tar, dc) {
+			if strings.HasPrefix(tar, dc+"-") {
 				if ansSRV.Priority < 2 {
 					ansSRV.Priority = uint16(0)
 				} else {

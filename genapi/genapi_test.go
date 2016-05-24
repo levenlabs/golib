@@ -93,6 +93,12 @@ func TestSRVClientPreprocess(t *T) {
 			Port:     uint16(80),
 			Priority: uint16(5),
 		}),
+		// Verify priorty never comes back less than zero
+		dns.RR(&dns.SRV{
+			Target:   dcHash + "-" + testutil.RandStr(),
+			Port:     uint16(80),
+			Priority: uint16(0),
+		}),
 		// A server with a different DC
 		dns.RR(&dns.SRV{
 			Target:   testutil.RandStr() + "-" + testutil.RandStr(),
@@ -105,11 +111,17 @@ func TestSRVClientPreprocess(t *T) {
 			Port:     uint16(80),
 			Priority: uint16(5),
 		}),
+		// Verify that a host hash that matches the DC hash doesn't get matched
+		dns.RR(&dns.SRV{
+			Target:   dcHash,
+			Port:     uint16(80),
+			Priority: uint16(5),
+		}),
 	}
 
 	g.srvClientPreprocess(m)
 
-	correctPri := []uint16{uint16(4), uint16(5), uint16(5)}
+	correctPri := []uint16{uint16(4), uint16(0), uint16(5), uint16(5), uint16(5)}
 	for i := range m.Answer {
 		ansSRV, ok := m.Answer[i].(*dns.SRV)
 		require.True(t, ok)
