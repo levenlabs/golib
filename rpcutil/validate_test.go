@@ -3,9 +3,10 @@ package rpcutil
 import (
 	. "testing"
 
+	"time"
+
 	"github.com/stretchr/testify/require"
 	"gopkg.in/validator.v2"
-	"time"
 )
 
 func TestArrMap(t *T) {

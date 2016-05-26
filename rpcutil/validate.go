@@ -10,8 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"gopkg.in/validator.v2"
 	"time"
+
+	"gopkg.in/validator.v2"
 )
 
 var vRegexes = map[string]*regexp.Regexp{}

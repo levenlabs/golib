@@ -2,6 +2,7 @@ package rpcutil
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -220,4 +221,22 @@ func TestLLCodec(t *T) {
 	res = TestRes{}
 	require.Nil(t, JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args))
 	assert.Equal(t, s, res.Bar2)
+}
+
+func TestStringifyInterface(t *T) {
+	str := `{"test":true}`
+	m := json.RawMessage([]byte(str))
+	str2 := stringifyInterface(&m)
+	assert.Equal(t, str, str2)
+
+	b := []byte(str)
+	str2 = stringifyInterface(b)
+	assert.Equal(t, str, str2)
+
+	str2 = stringifyInterface(str)
+	assert.Equal(t, str, str2)
+
+	err := errors.New(str)
+	str2 = stringifyInterface(err)
+	assert.Equal(t, str, str2)
 }

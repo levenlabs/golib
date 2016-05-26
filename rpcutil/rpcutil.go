@@ -129,6 +129,16 @@ type llCodecRequest struct {
 	kv llog.KV
 }
 
+func stringifyInterface(args interface{}) string {
+	if rm, ok := args.(*json.RawMessage); ok {
+		return string(*rm)
+	}
+	if by, ok := args.([]byte); ok {
+		return string(by)
+	}
+	return fmt.Sprintf("%+v", args)
+}
+
 func (cr llCodecRequest) ReadRequest(args interface{}) error {
 	// After calling the underlying ReadRequest the args will be filled in
 	if err := cr.CodecRequest.ReadRequest(args); err != nil {
@@ -143,7 +153,8 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 	if cr.c.ExcludeRequestLog[method] {
 		// don't log anything
 	} else if llog.GetLevel() == llog.DebugLevel {
-		cr.kv["args"] = fmt.Sprintf("%+v", args)
+		cr.kv["args"] = stringifyInterface(args)
+		cr.kv["argsType"] = fmt.Sprintf("%T", args)
 		fn = llog.Debug
 	} else {
 		fn = llog.Info
@@ -193,7 +204,7 @@ func (cr llCodecRequest) maybeInlineExtra(r interface{}) (interface{}, error) {
 
 func (cr llCodecRequest) WriteResponse(w http.ResponseWriter, r interface{}) {
 	if llog.GetLevel() == llog.DebugLevel {
-		cr.kv["response"] = fmt.Sprintf("%+v", r)
+		cr.kv["response"] = stringifyInterface(r)
 		llog.Debug("jsonrpc responding", cr.kv)
 	}
 
