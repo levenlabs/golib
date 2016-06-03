@@ -742,19 +742,33 @@ func (g *GenAPI) doSkyAPI() chan struct{} {
 	}
 	dc := g.getDCHash()
 
-	kv := llog.KV{"skyapiAddr": skyapiAddr, "listenAddr": g.ListenAddr}
-	llog.Info("connecting to skyapi", kv)
+	kv := llog.KV{
+		"skyapiAddr":  skyapiAddr,
+		"listenAddr":  g.ListenAddr,
+		"serviceName": g.Name,
+		"prefix":      dc,
+	}
 	stopCh := make(chan struct{})
 	go func() {
-		kv["err"] = client.ProvideOpts(client.Opts{
-			SkyAPIAddr:        skyapiAddr,
-			Service:           g.Name,
-			ThisAddr:          g.ListenAddr,
-			ReconnectAttempts: -1,
-			StopCh:            stopCh,
-			Prefix:            dc,
-		})
-		llog.Fatal("skyapi giving up reconnecting", kv)
+		for {
+			llog.Info("connecting to skyapi", kv)
+			err := client.ProvideOpts(client.Opts{
+				SkyAPIAddr:        skyapiAddr,
+				Service:           g.Name,
+				ThisAddr:          g.ListenAddr,
+				ReconnectAttempts: 0, // do not attempt to reconnect, we'll do that here
+				StopCh:            stopCh,
+				Prefix:            dc,
+			})
+			if err != nil {
+				llog.Error("skyapi error", kv.Set("err", err))
+				time.Sleep(1 * time.Second)
+			} else {
+				// If there wasn't an error but skyapi stopped, it's because the
+				// stopCh was closed
+				return
+			}
+		}
 	}()
 	return stopCh
 }
