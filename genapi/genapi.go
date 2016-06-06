@@ -327,6 +327,9 @@ type GenAPI struct {
 
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
+
+	// set of active listeners for this genapi (APIMode only)
+	listeners []*listenerReloader
 }
 
 // The different possible Mode values for GenAPI
@@ -362,7 +365,7 @@ func (g *GenAPI) APIMode() {
 		if addr == "" {
 			continue
 		}
-		g.serve(h, addr, false)
+		g.listeners = append(g.listeners, g.serve(h, addr, false))
 	}
 
 	if g.TLSInfo != nil {
@@ -371,7 +374,7 @@ func (g *GenAPI) APIMode() {
 			if addr == "" {
 				continue
 			}
-			g.serve(h, addr, true)
+			g.listeners = append(g.listeners, g.serve(h, addr, true))
 		}
 	}
 
@@ -398,10 +401,11 @@ func (g *GenAPI) APIMode() {
 	if g.DoneCh != nil {
 		close(g.DoneCh)
 	}
+
 }
 
 // This starts a go-routine which will do the actual serving of the handler
-func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
+func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloader {
 	kv := llog.KV{"addr": addr, "tls": doTLS}
 	llog.Info("creating listen socket", kv)
 	ln, err := net.Listen("tcp", addr)
@@ -417,31 +421,43 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
 		g.ListenAddr = actualAddr
 	}
 
-	srv := &http.Server{
-		Addr:    actualAddr,
-		Handler: h,
-	}
-
 	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
-
-	allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
-	allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
-	if netln, err = newProxyListener(netln, allowedProxyCIDRs); err != nil {
-		llog.Fatal("failed to make proxy proto listener", kv.Set("err", err))
-	}
-
-	if doTLS {
-		srv.TLSConfig = &tls.Config{
-			Certificates: g.TLSInfo.Certs,
-		}
-		srv.TLSConfig.BuildNameToCertificate()
-		netln = tls.NewListener(netln, srv.TLSConfig)
+	lr, err := newListenerReloader(netln, g.listenerMaker(doTLS))
+	if err != nil {
+		llog.Fatal("failed to create listener", kv.Set("err", err))
 	}
 
 	go func() {
 		llog.Info("starting rpc listening", kv)
-		srv.Serve(netln)
+		srv := &http.Server{
+			Handler: h,
+		}
+		srv.Serve(lr)
 	}()
+
+	return lr
+}
+
+func (g *GenAPI) listenerMaker(doTLS bool) func(net.Listener) (net.Listener, error) {
+	return func(l net.Listener) (net.Listener, error) {
+		var err error
+
+		allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
+		allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
+		if l, err = newProxyListener(l, allowedProxyCIDRs); err != nil {
+			return nil, fmt.Errorf("proxy proto listener: %s", err)
+		}
+
+		if doTLS {
+			tf := &tls.Config{
+				Certificates: g.TLSInfo.Certs,
+			}
+			tf.BuildNameToCertificate()
+			l = tls.NewListener(l, tf)
+		}
+
+		return l, nil
+	}
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
@@ -891,6 +907,21 @@ func (g *GenAPI) RequestContext(r *http.Request) context.Context {
 		ctx = context.Background()
 	}
 	return ctx
+}
+
+// ReloadListeners stops all the existing listeners and remakes them. Only
+// useful in APIMode.
+func (g *GenAPI) ReloadListeners() {
+	// first close all the previous listeners
+	for _, l := range g.listeners {
+		log.Printf("closing %v", l)
+		l.Close()
+	}
+	// wait for the operating system to actually release the ports
+	// TODO this sucks
+	time.Sleep(1 * time.Second)
+	g.listeners = nil
+	g.listen()
 }
 
 // Call makes an rpc call, presumably to another genapi server but really it
