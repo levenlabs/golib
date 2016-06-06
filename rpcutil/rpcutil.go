@@ -203,11 +203,7 @@ func (cr llCodecRequest) maybeInlineExtra(r interface{}) (interface{}, error) {
 }
 
 func (cr llCodecRequest) WriteResponse(w http.ResponseWriter, r interface{}) {
-	if llog.GetLevel() == llog.DebugLevel {
-		cr.kv["response"] = stringifyInterface(r)
-		llog.Debug("jsonrpc responding", cr.kv)
-	}
-
+	llog.Debug("jsonrpc responding", cr.kv)
 	newR, err := cr.maybeInlineExtra(r)
 	if err != nil {
 		kv := llog.KV{
