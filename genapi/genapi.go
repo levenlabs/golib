@@ -92,6 +92,7 @@ import (
 
 	"golang.org/x/net/context"
 
+	"github.com/armon/go-proxyproto"
 	"github.com/gorilla/rpc/v2"
 	"github.com/levenlabs/gatewayrpc"
 	"github.com/levenlabs/go-llog"
@@ -423,6 +424,11 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
 	}
 
 	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
+
+	// support the HAProxy PROXY protocol, because ELB uses it instead of
+	// X-Forwarded-For
+	netln = &proxyproto.Listener{Listener: netln}
+
 	if doTLS {
 		srv.TLSConfig = &tls.Config{
 			Certificates: g.TLSInfo.Certs,
