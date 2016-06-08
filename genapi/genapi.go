@@ -423,6 +423,13 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
 	}
 
 	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
+
+	allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
+	allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
+	if netln, err = newProxyListener(netln, allowedProxyCIDRs); err != nil {
+		llog.Fatal("failed to make proxy proto listener", kv.Set("err", err))
+	}
+
 	if doTLS {
 		srv.TLSConfig = &tls.Config{
 			Certificates: g.TLSInfo.Certs,
@@ -646,6 +653,11 @@ func (g *GenAPI) doLever() {
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",
+		})
+		g.Lever.Add(lever.Param{
+			Name:        "--proxy-proto-allowed-cidrs",
+			Description: "Comma separated list of cidrs which are allowed to use the PROXY protocol",
+			Default:     "127.0.0.1/32,::1/128,10.0.0.0/8",
 		})
 	}
 
