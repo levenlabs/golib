@@ -381,6 +381,13 @@ func (g *GenAPI) APIMode() {
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
 
+	if g.InitDoneCh != nil {
+		close(g.InitDoneCh)
+	}
+
+	// After this point everything is listening and we're just waiting for a
+	// kill signal
+
 	llog.Info("waiting for close signal")
 
 	sigCh := make(chan os.Signal, 1)
@@ -620,7 +627,8 @@ func (g *GenAPI) init() {
 		f(g)
 	}
 
-	if g.InitDoneCh != nil {
+	// InitDoneCh gets closed at the end of APIMode being called
+	if g.Mode != APIMode && g.InitDoneCh != nil {
 		close(g.InitDoneCh)
 	}
 }
@@ -909,24 +917,22 @@ func (g *GenAPI) RequestContext(r *http.Request) context.Context {
 	return ctx
 }
 
-// ReloadListeners stops all the existing listeners and remakes them. Only
-// useful in APIMode.
-func (g *GenAPI) ReloadListeners() {
-	// first close all the previous listeners
-	for _, l := range g.listeners {
-		log.Printf("closing %v", l)
-		l.Close()
+// ReloadListeners reloads the listener configurations of all existing
+// listeners. This doesn't actually close the listen sockets, just hot reloads
+// the configuration. Goes through each listener sequentially and returns the
+// first error it encounters.
+func (g *GenAPI) ReloadListeners() error {
+	for _, lr := range g.listeners {
+		if err := lr.Reload(); err != nil {
+			return err
+		}
 	}
-	// wait for the operating system to actually release the ports
-	// TODO this sucks
-	time.Sleep(1 * time.Second)
-	g.listeners = nil
-	g.listen()
+	return nil
 }
 
 // Call makes an rpc call, presumably to another genapi server but really it
 // only has to be a JSONRPC2 server. If it is another genapi server, however,
-// the given context will be propogated to it, as well as being used here as a
+// the given context will be propagated to it, as well as being used here as a
 // timeout if deadline is set on it. See rpcutil for more on how the rest of the
 // arguments work.
 //
