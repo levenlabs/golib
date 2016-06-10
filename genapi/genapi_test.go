@@ -1,9 +1,11 @@
 package genapi
 
 import (
+	"net/http"
 	"os"
 	. "testing"
 
+	"github.com/levenlabs/golib/rpcutil"
 	"github.com/levenlabs/golib/testutil"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
@@ -127,4 +129,31 @@ func TestSRVClientPreprocess(t *T) {
 		require.True(t, ok)
 		assert.Equal(t, ansSRV.Priority, correctPri[i])
 	}
+}
+
+type APIModeTest struct{}
+
+func (APIModeTest) Echo(r *http.Request, in, out *struct{ A int }) error {
+	out.A = in.A
+	return nil
+}
+
+// Basic test to make sure listening is sane and requests work
+func TestAPIMode(t *T) {
+	ga := &GenAPI{
+		Name:       "apimodetest",
+		Services:   []interface{}{APIModeTest{}},
+		InitDoneCh: make(chan bool),
+	}
+
+	go func() { ga.APIMode() }()
+	<-ga.InitDoneCh
+
+	assert.NotEmpty(t, ga.ListenAddr)
+
+	var args, res struct{ A int }
+	args.A = 2
+	err := rpcutil.JSONRPC2Call("http://"+ga.ListenAddr, &res, "APIModeTest.Echo", &args)
+	require.Nil(t, err)
+	assert.Equal(t, 2, res.A)
 }

@@ -327,6 +327,9 @@ type GenAPI struct {
 
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
+
+	// set of active listeners for this genapi (APIMode only)
+	listeners []*listenerReloader
 }
 
 // The different possible Mode values for GenAPI
@@ -362,7 +365,7 @@ func (g *GenAPI) APIMode() {
 		if addr == "" {
 			continue
 		}
-		g.serve(h, addr, false)
+		g.listeners = append(g.listeners, g.serve(h, addr, false))
 	}
 
 	if g.TLSInfo != nil {
@@ -371,12 +374,19 @@ func (g *GenAPI) APIMode() {
 			if addr == "" {
 				continue
 			}
-			g.serve(h, addr, true)
+			g.listeners = append(g.listeners, g.serve(h, addr, true))
 		}
 	}
 
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
+
+	if g.InitDoneCh != nil {
+		close(g.InitDoneCh)
+	}
+
+	// After this point everything is listening and we're just waiting for a
+	// kill signal
 
 	llog.Info("waiting for close signal")
 
@@ -398,10 +408,11 @@ func (g *GenAPI) APIMode() {
 	if g.DoneCh != nil {
 		close(g.DoneCh)
 	}
+
 }
 
 // This starts a go-routine which will do the actual serving of the handler
-func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
+func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloader {
 	kv := llog.KV{"addr": addr, "tls": doTLS}
 	llog.Info("creating listen socket", kv)
 	ln, err := net.Listen("tcp", addr)
@@ -417,31 +428,43 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) {
 		g.ListenAddr = actualAddr
 	}
 
-	srv := &http.Server{
-		Addr:    actualAddr,
-		Handler: h,
-	}
-
 	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
-
-	allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
-	allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
-	if netln, err = newProxyListener(netln, allowedProxyCIDRs); err != nil {
-		llog.Fatal("failed to make proxy proto listener", kv.Set("err", err))
-	}
-
-	if doTLS {
-		srv.TLSConfig = &tls.Config{
-			Certificates: g.TLSInfo.Certs,
-		}
-		srv.TLSConfig.BuildNameToCertificate()
-		netln = tls.NewListener(netln, srv.TLSConfig)
+	lr, err := newListenerReloader(netln, g.listenerMaker(doTLS))
+	if err != nil {
+		llog.Fatal("failed to create listener", kv.Set("err", err))
 	}
 
 	go func() {
 		llog.Info("starting rpc listening", kv)
-		srv.Serve(netln)
+		srv := &http.Server{
+			Handler: h,
+		}
+		srv.Serve(lr)
 	}()
+
+	return lr
+}
+
+func (g *GenAPI) listenerMaker(doTLS bool) func(net.Listener) (net.Listener, error) {
+	return func(l net.Listener) (net.Listener, error) {
+		var err error
+
+		allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
+		allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
+		if l, err = newProxyListener(l, allowedProxyCIDRs); err != nil {
+			return nil, fmt.Errorf("proxy proto listener: %s", err)
+		}
+
+		if doTLS {
+			tf := &tls.Config{
+				Certificates: g.TLSInfo.Certs,
+			}
+			tf.BuildNameToCertificate()
+			l = tls.NewListener(l, tf)
+		}
+
+		return l, nil
+	}
 }
 
 // TestMode puts the GenAPI into TestMode, wherein it is then prepared to be
@@ -604,7 +627,8 @@ func (g *GenAPI) init() {
 		f(g)
 	}
 
-	if g.InitDoneCh != nil {
+	// InitDoneCh gets closed at the end of APIMode being called
+	if g.Mode != APIMode && g.InitDoneCh != nil {
 		close(g.InitDoneCh)
 	}
 }
@@ -893,9 +917,22 @@ func (g *GenAPI) RequestContext(r *http.Request) context.Context {
 	return ctx
 }
 
+// ReloadListeners reloads the listener configurations of all existing
+// listeners. This doesn't actually close the listen sockets, just hot reloads
+// the configuration. Goes through each listener sequentially and returns the
+// first error it encounters.
+func (g *GenAPI) ReloadListeners() error {
+	for _, lr := range g.listeners {
+		if err := lr.Reload(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Call makes an rpc call, presumably to another genapi server but really it
 // only has to be a JSONRPC2 server. If it is another genapi server, however,
-// the given context will be propogated to it, as well as being used here as a
+// the given context will be propagated to it, as well as being used here as a
 // timeout if deadline is set on it. See rpcutil for more on how the rest of the
 // arguments work.
 //
