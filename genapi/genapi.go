@@ -333,6 +333,8 @@ type GenAPI struct {
 
 	// the active httpWaiter for the instance
 	hw *httpWaiter
+
+	countCh chan bool
 }
 
 // The different possible Mode values for GenAPI
@@ -383,6 +385,13 @@ func (g *GenAPI) APIMode() {
 
 }
 
+func (g *GenAPI) countHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.countCh <- true
+		h.ServeHTTP(w, r)
+	})
+}
+
 // RPCListen sets up listeners for the GenAPI listen and starts them up. This
 // may only be called after TestMode or CLIMode has been called, it is
 // automatically done for APIMode.
@@ -398,7 +407,12 @@ func (g *GenAPI) RPCListen() {
 	g.hw = &httpWaiter{
 		ch: make(chan struct{}, 1),
 	}
-	h := g.hw.handler(g.contextHandler(g.Mux))
+
+	var h http.Handler
+	h = g.Mux
+	h = g.countHandler(h)
+	h = g.contextHandler(h)
+	h = g.hw.handler(h)
 
 	addrs, _ := g.Lever.ParamStrs("--listen-addr")
 	for _, addr := range addrs {
@@ -627,6 +641,21 @@ func (g *GenAPI) init() {
 			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
 		}
 	}
+
+	g.countCh = make(chan bool)
+	go func() {
+		t := time.Tick(1 * time.Minute)
+		var c uint64
+		for {
+			select {
+			case <-g.countCh:
+				c++
+			case <-t:
+				llog.Info("count requests in last minute", llog.KV{"count": c})
+				c = 0
+			}
+		}
+	}()
 
 	if g.Init != nil {
 		// make sure the struct's Init is always called first
@@ -875,7 +904,10 @@ func (g *GenAPI) initOkq() {
 		llog.Fatal("error connection to okq", kv, llog.KV{"err": err})
 	}
 
-	g.OkqInfo.Client = &okq.Client{RedisPool: p, NotifyTimeout: g.OkqInfo.Timeout}
+	g.OkqInfo.Client = okq.NewWithOpts(okq.Opts{
+		RedisPool:     p,
+		NotifyTimeout: g.OkqInfo.Timeout,
+	})
 }
 
 func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
