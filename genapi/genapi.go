@@ -904,7 +904,10 @@ func (g *GenAPI) initOkq() {
 		llog.Fatal("error connection to okq", kv, llog.KV{"err": err})
 	}
 
-	g.OkqInfo.Client = &okq.Client{RedisPool: p, NotifyTimeout: g.OkqInfo.Timeout}
+	g.OkqInfo.Client = okq.NewWithOpts(okq.Opts{
+		RedisPool:     p,
+		NotifyTimeout: g.OkqInfo.Timeout,
+	})
 }
 
 func (g *GenAPI) contextHandler(h http.Handler) http.Handler {
