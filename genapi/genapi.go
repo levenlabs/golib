@@ -330,6 +330,9 @@ type GenAPI struct {
 
 	// set of active listeners for this genapi (APIMode only)
 	listeners []*listenerReloader
+
+	// the active httpWaiter for the instance
+	hw *httpWaiter
 }
 
 // The different possible Mode values for GenAPI
@@ -345,38 +348,7 @@ const (
 func (g *GenAPI) APIMode() {
 	g.Mode = APIMode
 	g.init()
-
-	if g.RPCEndpoint != "_" {
-		g.Mux.Handle(g.RPCEndpoint, g.RPC())
-	}
-	// The net/http/pprof package expects to be under /debug/pprof/, which is
-	// why we don't strip the prefix here
-	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
-	g.Mux.Handle("/health-check", g.healthCheck())
-
-	hw := &httpWaiter{
-		ch: make(chan struct{}, 1),
-	}
-	h := hw.handler(g.contextHandler(g.Mux))
-
-	addrs, _ := g.Lever.ParamStrs("--listen-addr")
-	for _, addr := range addrs {
-		// empty addr might get passed in to disable --listen-addr
-		if addr == "" {
-			continue
-		}
-		g.listeners = append(g.listeners, g.serve(h, addr, false))
-	}
-
-	if g.TLSInfo != nil {
-		addrs, _ := g.Lever.ParamStrs("--tls-listen-addr")
-		for _, addr := range addrs {
-			if addr == "" {
-				continue
-			}
-			g.listeners = append(g.listeners, g.serve(h, addr, true))
-		}
-	}
+	g.RPCListen()
 
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
@@ -402,13 +374,50 @@ func (g *GenAPI) APIMode() {
 		// after hw.wait() runs
 		time.Sleep(500 * time.Millisecond)
 	}
-	hw.wait()
+	g.hw.wait() // hw is populated in RPCListen
 	time.Sleep(50 * time.Millisecond)
 
 	if g.DoneCh != nil {
 		close(g.DoneCh)
 	}
 
+}
+
+// RPCListen sets up listeners for the GenAPI listen and starts them up. This
+// may only be called after TestMode or CLIMode has been called, it is
+// automatically done for APIMode.
+func (g *GenAPI) RPCListen() {
+	if g.RPCEndpoint != "_" {
+		g.Mux.Handle(g.RPCEndpoint, g.RPC())
+	}
+	// The net/http/pprof package expects to be under /debug/pprof/, which is
+	// why we don't strip the prefix here
+	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
+	g.Mux.Handle("/health-check", g.healthCheck())
+
+	g.hw = &httpWaiter{
+		ch: make(chan struct{}, 1),
+	}
+	h := g.hw.handler(g.contextHandler(g.Mux))
+
+	addrs, _ := g.Lever.ParamStrs("--listen-addr")
+	for _, addr := range addrs {
+		// empty addr might get passed in to disable --listen-addr
+		if addr == "" {
+			continue
+		}
+		g.listeners = append(g.listeners, g.serve(h, addr, false))
+	}
+
+	if g.TLSInfo != nil {
+		addrs, _ := g.Lever.ParamStrs("--tls-listen-addr")
+		for _, addr := range addrs {
+			if addr == "" {
+				continue
+			}
+			g.listeners = append(g.listeners, g.serve(h, addr, true))
+		}
+	}
 }
 
 // This starts a go-routine which will do the actual serving of the handler
@@ -651,29 +660,32 @@ func (g *GenAPI) doLever() {
 		Default:     os.Getenv("DATACENTER"),
 	})
 
-	if g.Mode == APIMode {
+	// The listen-addr parameters can be used outside of APIMode through the
+	// RPCListener method
+	g.Lever.Add(lever.Param{
+		Name:         "--listen-addr",
+		Description:  "[address]:port to listen for requests on. If port is zero a port will be chosen randomly",
+		DefaultMulti: []string{":0"},
+	})
+	if g.TLSInfo != nil {
 		g.Lever.Add(lever.Param{
-			Name:         "--listen-addr",
-			Description:  "[address]:port to listen for requests on. If port is zero a port will be chosen randomly",
-			DefaultMulti: []string{":0"},
+			Name:         "--tls-listen-addr",
+			Description:  "[address]:port to listen for https requests on. If port is zero a port will be chosen randomly",
+			DefaultMulti: []string{},
 		})
-		if g.TLSInfo != nil {
+		if !g.TLSInfo.FillCertsManually {
 			g.Lever.Add(lever.Param{
-				Name:         "--tls-listen-addr",
-				Description:  "[address]:port to listen for https requests on. If port is zero a port will be chosen randomly",
-				DefaultMulti: []string{},
+				Name:        "--tls-cert-file",
+				Description: "Certificate file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-key-file.",
 			})
-			if !g.TLSInfo.FillCertsManually {
-				g.Lever.Add(lever.Param{
-					Name:        "--tls-cert-file",
-					Description: "Certificate file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-key-file.",
-				})
-				g.Lever.Add(lever.Param{
-					Name:        "--tls-key-file",
-					Description: "Key file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-cert-file.",
-				})
-			}
+			g.Lever.Add(lever.Param{
+				Name:        "--tls-key-file",
+				Description: "Key file to use for TLS. Maybe be specified more than once. Must be specified as many times as --tls-cert-file.",
+			})
 		}
+	}
+
+	if g.Mode == APIMode {
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",

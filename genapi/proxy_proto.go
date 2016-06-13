@@ -13,12 +13,19 @@ type proxyListener struct {
 }
 
 func newProxyListener(l net.Listener, allowed []string) (net.Listener, error) {
-	var err error
-	a := make([]*net.IPNet, len(allowed))
+	a := make([]*net.IPNet, 0, len(allowed))
 	for i := range allowed {
-		if _, a[i], err = net.ParseCIDR(allowed[i]); err != nil {
+		if allowed[i] == "" {
+			continue
+		}
+		_, parsed, err := net.ParseCIDR(allowed[i])
+		if err != nil {
 			return proxyListener{}, err
 		}
+		a = append(a, parsed)
+	}
+	if len(a) == 0 {
+		return l, nil
 	}
 	return proxyListener{
 		Listener: l,
