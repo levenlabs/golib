@@ -40,6 +40,9 @@ func ipIsPrivate(ip net.IP) bool {
 
 // RequestIP returns the string form of the original requester's IP address for
 // the given request, taking into account X-Forwarded-For if applicable.
+// If the request was from a loopback address, then we will take the first
+// non-loopback X-Forwarded-For address. This is under the assumption that
+// your golang server is running behind a reverse proxy.
 func RequestIP(r *http.Request) string {
 	reqIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 
@@ -48,10 +51,17 @@ func RequestIP(r *http.Request) string {
 		return reqIP
 	}
 
+	origIP := net.ParseIP(reqIP)
 	ips := strings.Split(xff, ",")
 	for i := range ips {
 		ip := net.ParseIP(strings.TrimSpace(ips[i]))
-		if ip == nil || ip.IsLoopback() || ipIsPrivate(ip) {
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+		// accept any XFF private or not if the request's IP is a loopback IP
+		// because if you're running golang behind a local reverse proxy, the
+		// request's IP will always be loopback
+		if ipIsPrivate(ip) && !origIP.IsLoopback() {
 			continue
 		}
 		reqIP = ip.String()
