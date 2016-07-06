@@ -974,6 +974,19 @@ func (g *GenAPI) ReloadListeners() error {
 	return nil
 }
 
+// CallErr is an implementation of error which is returned from the Call method,
+// and subsequently by the Call methods on Callers returned by RemoteAPICaller
+// and NewCaller. If used, CallErr will not be a pointer
+type CallErr struct {
+	URL    string
+	Method string
+	Err    error
+}
+
+func (c CallErr) Error() string {
+	return fmt.Sprintf("calling %q on %q: %s", c.Method, c.URL, c.Err)
+}
+
 // Call makes an rpc call, presumably to another genapi server but really it
 // only has to be a JSONRPC2 server. If it is another genapi server, however,
 // the given context will be propagated to it, as well as being used here as a
@@ -987,7 +1000,7 @@ func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string,
 
 	r, err := http.NewRequest("POST", host, nil)
 	if err != nil {
-		return err
+		return CallErr{URL: host, Method: method, Err: err}
 	}
 	ContextApply(r, ctx)
 
@@ -996,7 +1009,10 @@ func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string,
 		Context:     ctx,
 	}
 
-	return rpcutil.JSONRPC2CallOpts(opts, host, res, method, args)
+	if err := rpcutil.JSONRPC2CallOpts(opts, host, res, method, args); err != nil {
+		return CallErr{URL: host, Method: method, Err: err}
+	}
+	return nil
 }
 
 func (g *GenAPI) remoteAPIAddr(remoteAPI string) string {
@@ -1021,6 +1037,13 @@ type caller struct {
 
 func (c caller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
 	return c.g.Call(ctx, res, c.addr, method, args)
+}
+
+// NewCaller returns an instance of a Caller which will make RPC requests
+// against the given address, after doing a SRV request on it before each
+// request
+func (g *GenAPI) NewCaller(addr string) Caller {
+	return caller{g, addr}
 }
 
 // RemoteAPIAddr returns an address to use for the given remoteAPI (which must
