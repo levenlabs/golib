@@ -392,6 +392,17 @@ func (g *GenAPI) countHandler(h http.Handler) http.Handler {
 	})
 }
 
+func (g *GenAPI) hostnameHandler(h http.Handler) http.Handler {
+	hostname, _ := g.ParamStr("--hostname")
+	if hostname == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Hostname", hostname)
+		h.ServeHTTP(w, r)
+	})
+}
+
 // RPCListen sets up listeners for the GenAPI listen and starts them up. This
 // may only be called after TestMode or CLIMode has been called, it is
 // automatically done for APIMode.
@@ -411,6 +422,7 @@ func (g *GenAPI) RPCListen() {
 	var h http.Handler
 	h = g.Mux
 	h = g.countHandler(h)
+	h = g.hostnameHandler(h)
 	h = g.contextHandler(h)
 	h = g.hw.handler(h)
 
@@ -687,6 +699,12 @@ func (g *GenAPI) doLever() {
 		Name:        "--datacenter",
 		Description: "What datacenter the service is running in",
 		Default:     os.Getenv("DATACENTER"),
+	})
+
+	g.Lever.Add(lever.Param{
+		Name:        "--hostname",
+		Description: "What hostanme the service is running on",
+		Default:     os.Getenv("HOSTNAME"),
 	})
 
 	// The listen-addr parameters can be used outside of APIMode through the
