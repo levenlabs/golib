@@ -54,7 +54,7 @@ func (p proxyListener) Accept() (net.Conn, error) {
 
 	for _, cidr := range p.allowed {
 		if cidr.Contains(ip) {
-			return proxyproto.NewConn(c), nil
+			return proxyproto.NewConn(c, 0), nil
 		}
 	}
 	return c, nil
