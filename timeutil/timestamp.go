@@ -95,3 +95,13 @@ func TimestampFromFloat64(ts float64) Timestamp {
 	nsecs := int64((ts - float64(secs)) * 1e9)
 	return Timestamp{time.Unix(secs, nsecs)}
 }
+
+// TimestampFromString attempts to parse the string as a float64, and then
+// passes that into TimestampFromFloat64, returning the result
+func TimestampFromString(ts string) (Timestamp, error) {
+	f, err := strconv.ParseFloat(ts, 64)
+	if err != nil {
+		return Timestamp{}, err
+	}
+	return TimestampFromFloat64(f), nil
+}
