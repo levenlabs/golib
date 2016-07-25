@@ -1,8 +1,8 @@
 package genapi
 
+/*
 import . "testing"
 
-/*
 func TestCallerStub(t *T) {
 	method := "Test.Test"
 	args := map[string]interface{}{

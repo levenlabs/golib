@@ -1,6 +1,9 @@
 package genapi
 
 import (
+	"log"
+	"os"
+	"strings"
 	. "testing"
 
 	"github.com/levenlabs/golib/testutil"
@@ -24,13 +27,14 @@ func (tc *testConfigurator) WithParams(l *lever.Lever) {
 
 func TestConfig(t *T) {
 	c := Config{Name: "test"}
-	a := testConfigurator{name: testutil.RandStr()}
+	a := &testConfigurator{name: strings.ToUpper(testutil.RandStr())}
 	aVal := testutil.RandStr()
-	require.Nil(t, os.SetEnv("test_"+a.name, aVal))
+	require.Nil(t, os.Setenv("TEST_"+a.name, aVal))
 
-	b := testConfigurator{name: testutil.RandStr()}
+	b := &testConfigurator{name: strings.ToUpper(testutil.RandStr())}
 	bVal := testutil.RandStr()
-	require.Nil(t, os.SetEnv("test_"+b.name, bVal))
+	require.Nil(t, os.Setenv("TEST_"+b.name, bVal))
+	log.Printf("TEST_%s: %s", b.name, os.Getenv("TEST_"+b.name))
 
 	c.Add(a, b)
 	assert.Nil(t, c.configurate())

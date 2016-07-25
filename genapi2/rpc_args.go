@@ -8,7 +8,7 @@ type argsApplyHandler struct {
 }
 
 func (aah argsApplyHandler) ServeRPC(c lrpc.Call) interface{} {
-	return aah.Handler(argsApplyCall{
+	return aah.Handler.ServeRPC(argsApplyCall{
 		Call: c,
 		aah:  aah,
 	})
@@ -24,5 +24,5 @@ func (aac argsApplyCall) UnmarshalArgs(i interface{}) error {
 		return err
 	}
 
-	aac.aah.apply(i)
+	return aac.aah.apply(i)
 }

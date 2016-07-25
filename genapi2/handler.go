@@ -72,7 +72,7 @@ func (htpl HandlerTpl) Handler() (http.Handler, error) {
 	go func() {
 		for range time.Tick(1 * time.Minute) {
 			c := ch.Count()
-			llog.Info("count requests in last minute", llog.KV{"count": ch})
+			llog.Info("count requests in last minute", llog.KV{"count": c})
 		}
 	}()
 	h.Handler = ch

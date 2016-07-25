@@ -43,6 +43,7 @@ func hasParamConflict(p lever.Param, existing []lever.Param) bool {
 				}
 			}
 		}
+		return false
 	}
 
 	if conflicts(p.Name) {

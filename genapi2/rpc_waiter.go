@@ -16,7 +16,7 @@ type rpcWaiter struct {
 }
 
 func newRPCWaiter(h lrpc.Handler) *rpcWaiter {
-	return rpcWaiter{
+	return &rpcWaiter{
 		ch: make(chan struct{}),
 		h:  h,
 	}
@@ -34,7 +34,7 @@ func (rw *rpcWaiter) ServeRPC(c lrpc.Call) interface{} {
 		rw.l.Unlock()
 
 		select {
-		case hw.ch <- struct{}{}:
+		case rw.ch <- struct{}{}:
 		default:
 		}
 
@@ -57,6 +57,6 @@ func (rw *rpcWaiter) wait() {
 			return
 		}
 
-		<-hw.ch
+		<-rw.ch
 	}
 }

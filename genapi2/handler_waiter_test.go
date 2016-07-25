@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var testWaiter = httpWaiter{ch: make(chan struct{})}
-var testWaiterHandler = func() http.Handler {
+var testHTTPWaiter = func() *httpWaiter {
 	m := http.NewServeMux()
 
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +27,7 @@ var testWaiterHandler = func() http.Handler {
 		panic("oh snap")
 	})
 
-	return testWaiter.handler(m)
+	return newHTTPWaiter(m)
 }()
 
 func TestHTTPWaiter(t *T) {
@@ -45,7 +44,7 @@ func TestHTTPWaiter(t *T) {
 				}
 			}()
 
-			testWaiterHandler.ServeHTTP(w, r)
+			testHTTPWaiter.ServeHTTP(w, r)
 			if u == "/panic" {
 				assert.Equal(t, 500, w.Code)
 			} else {
@@ -62,7 +61,7 @@ func TestHTTPWaiter(t *T) {
 		t.Fatal("timeout waiting for httpWaiter")
 	}()
 
-	testWaiter.wait()
+	testHTTPWaiter.wait()
 	since := time.Since(start)
 	t.Logf("since: %v", since)
 	assert.True(t, time.Since(start) > 1*time.Second)
