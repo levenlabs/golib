@@ -331,6 +331,9 @@ type GenAPI struct {
 	// Mutex for accessing Healthers
 	healthersL sync.Mutex
 
+	// Signal channel. Included for testing purposes only
+	sigCh chan os.Signal
+
 	// set of active listeners for this genapi (APIMode only)
 	listeners []*listenerReloader
 
@@ -352,6 +355,7 @@ const (
 // will block indefinitely
 func (g *GenAPI) APIMode() {
 	g.Mode = APIMode
+	g.sigCh = make(chan os.Signal, 1)
 	g.init()
 	g.RPCListen()
 
@@ -368,9 +372,8 @@ func (g *GenAPI) APIMode() {
 
 	llog.Info("waiting for close signal")
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-	<-sigCh
+	signal.Notify(g.sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-g.sigCh
 	llog.Info("signal received, stopping")
 	g.healthersL.Lock()
 	g.Healthers = map[string]Healther{

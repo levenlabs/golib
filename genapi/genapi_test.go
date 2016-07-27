@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"syscall"
 	. "testing"
 	"time"
 
@@ -168,10 +169,8 @@ func TestAPIMode(t *T) {
 	require.Nil(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// We want to test that health-check shows as unhealthy after a sigterm is received
-	p, err := os.FindProcess(os.Getpid())
-	require.Nil(t, err)
-	p.Signal(os.Interrupt)
+	// We want to test that health-check shows as unhealthy after a sigint is received
+	ga.sigCh <- syscall.SIGINT
 	time.Sleep(3000 * time.Millisecond)
 	resp, err = http.Get("http://127.0.0.1:" + port + "/health-check")
 	require.Nil(t, err)
