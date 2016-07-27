@@ -328,6 +328,9 @@ type GenAPI struct {
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
 
+	// Mutex for accessing Healthers
+	healthersL sync.Mutex
+
 	// set of active listeners for this genapi (APIMode only)
 	listeners []*listenerReloader
 
@@ -354,6 +357,7 @@ func (g *GenAPI) APIMode() {
 
 	// Once ListenAddr is populated with the final value we can call doSkyAPI
 	skyapiStopCh := g.doSkyAPI()
+	unhealthyTimeout, _ := g.ParamInt("--unhealthy-timeout")
 
 	if g.InitDoneCh != nil {
 		close(g.InitDoneCh)
@@ -368,6 +372,11 @@ func (g *GenAPI) APIMode() {
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
 	llog.Info("signal received, stopping")
+	g.healthersL.Lock()
+	g.Healthers = map[string]Healther{
+		"sneezy": sneezy{},
+	}
+	g.healthersL.Unlock()
 	if skyapiStopCh != nil {
 		llog.Info("stopping skyapi connection")
 		close(skyapiStopCh)
@@ -376,6 +385,8 @@ func (g *GenAPI) APIMode() {
 		// after hw.wait() runs
 		time.Sleep(500 * time.Millisecond)
 	}
+	// Appear as unhealthy for a while before hw.wait() runs
+	time.Sleep(time.Duration(unhealthyTimeout) * time.Millisecond)
 	g.hw.wait() // hw is populated in RPCListen
 	time.Sleep(50 * time.Millisecond)
 
@@ -444,6 +455,13 @@ func (g *GenAPI) RPCListen() {
 			g.listeners = append(g.listeners, g.serve(h, addr, true))
 		}
 	}
+}
+
+// AddHealther adds a healther to Healthers under the specified key
+func (g *GenAPI) AddHealther(key string, healther Healther) {
+	g.healthersL.Lock()
+	defer g.healthersL.Unlock()
+	g.Healthers[key] = healther
 }
 
 // This starts a go-routine which will do the actual serving of the handler
@@ -741,6 +759,10 @@ func (g *GenAPI) doLever() {
 			Name:        "--proxy-proto-allowed-cidrs",
 			Description: "Comma separated list of cidrs which are allowed to use the PROXY protocol",
 			Default:     "127.0.0.1/32,::1/128,10.0.0.0/8",
+		})
+		g.Lever.Add(lever.Param{
+			Name:        "--unhealthy-timeout",
+			Description: "Number of milliseconds to appear unhealthy after a stop signal is received",
 		})
 	}
 

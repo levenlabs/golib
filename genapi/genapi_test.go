@@ -1,9 +1,11 @@
 package genapi
 
 import (
+	"net"
 	"net/http"
 	"os"
 	. "testing"
+	"time"
 
 	"github.com/levenlabs/golib/rpcutil"
 	"github.com/levenlabs/golib/testutil"
@@ -146,6 +148,8 @@ func TestAPIMode(t *T) {
 		InitDoneCh: make(chan bool),
 	}
 
+	os.Setenv("APIMODETEST_UNHEALTHY_TIMEOUT", "5000")
+
 	go func() { ga.APIMode() }()
 	<-ga.InitDoneCh
 
@@ -153,7 +157,23 @@ func TestAPIMode(t *T) {
 
 	var args, res struct{ A int }
 	args.A = 2
-	err := rpcutil.JSONRPC2Call("http://"+ga.ListenAddr, &res, "APIModeTest.Echo", &args)
+	// ListenAddr is :port which doesn't have an IP so we just rip the port off
+	// and make the call on localhost
+	_, port, _ := net.SplitHostPort(ga.ListenAddr)
+	err := rpcutil.JSONRPC2Call("http://127.0.0.1:"+port, &res, "APIModeTest.Echo", &args)
 	require.Nil(t, err)
 	assert.Equal(t, 2, res.A)
+
+	resp, err := http.Get("http://127.0.0.1:" + port + "/health-check")
+	require.Nil(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// We want to test that health-check shows as unhealthy after a sigterm is received
+	p, err := os.FindProcess(os.Getpid())
+	require.Nil(t, err)
+	p.Signal(os.Interrupt)
+	time.Sleep(3000 * time.Millisecond)
+	resp, err = http.Get("http://127.0.0.1:" + port + "/health-check")
+	require.Nil(t, err)
+	assert.Equal(t, 500, resp.StatusCode)
 }
