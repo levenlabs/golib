@@ -17,9 +17,16 @@ type Configurator interface {
 
 	// WithParams is called once lever has been used to parse the params
 	// returned by Params. That lever instance is passed in, and from it the
-	// Configurator can retrieve whatever params it wants and initialize itself.
+	// Configurator can retrieve whatever params it wants and configure itself.
+	//
+	// NOTE it's not intended that WithParams is used to actually "kick off"
+	// execution of some entity, e.g. actually start an rpc server listening on
+	// a port. It should merely change some fields on the entity or something
+	// along those lines.
 	WithParams(*lever.Lever)
 }
+
+// TODO having the fields in Config be public is inconsistent with CallerConfig
 
 // Config wraps a set of Configurators together and attempts to resolve and
 // parse their configuration, subsequently calling WithParams on each of them
