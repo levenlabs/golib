@@ -2,6 +2,7 @@ package rpcutil
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strconv"
+	"strings"
 
 	"golang.org/x/net/context"
 )
@@ -44,7 +46,42 @@ func (h *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for range errCh {
 	}
 }
+
+const defaultEncodings = "gzip, deflate"
+
+func encodingSupported(enc string) bool {
+	switch enc {
+	case "gzip":
+		return true
+	case "deflate":
+		return true
 	}
+	return false
+}
+
+// our director adjusts the Accept-Encoding to only supported encodings
+func director(r *http.Request) {
+	ae := r.Header.Get("Accept-Encoding")
+	if ae == "*" {
+		r.Header.Set("Accept-Encoding", defaultEncodings)
+	} else if ae == "" {
+		return
+	}
+	aep := strings.Split(ae, ",")
+	newaep := make([]string, 0, len(aep))
+	for _, e := range aep {
+		// since were splitting on , there might be a space before
+		e = strings.TrimSpace(e)
+		// according to the spec, there also might be a q value after a
+		// semicolon, we don't really care about the q ourselves so ignore
+		ep := strings.Split(e, ";")
+		e = ep[0]
+		if encodingSupported(e) {
+			// send the original q value since that means something special
+			newaep = append(newaep, strings.Join(ep, ";"))
+		}
+	}
+	r.Header.Set("Accept-Encoding", strings.Join(newaep, ", "))
 }
 
 // ServeHTTPCtx will do the proxying of the given request and write the response
@@ -71,7 +108,7 @@ func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *
 	ew := errWriter{errCh}
 	go func() {
 		rp := &httputil.ReverseProxy{
-			Director: func(r *http.Request) {},
+			Director: director,
 			ErrorLog: log.New(ew, "", 0),
 		}
 		rp.ServeHTTP(w, r)
@@ -88,8 +125,8 @@ func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *
 // ActuallyWrite is called all headers will be written to the ResponseWriter
 // (with corrected Content-Length if Buffer was changed), followed by the body.
 //
-// BufferedResponseWriter will transparently handle un-gzipping and re-gzipping
-// the response body when it sees Content-Encoding: gzip.
+// BufferedResponseWriter will transparently handle uncompressing and recompressing
+// the response body when it sees a known Content-Encoding.
 type BufferedResponseWriter struct {
 	http.ResponseWriter
 	buffer  *bytes.Buffer
@@ -121,21 +158,7 @@ func (brw *BufferedResponseWriter) Write(b []byte) (int, error) {
 // buffered. If the response was compressed the body will be transparently
 // decompressed. The contents of the returned buffer should *not* be modified.
 func (brw *BufferedResponseWriter) GetBody() (*bytes.Buffer, error) {
-	body := brw.buffer
-	// TODO we need to support deflate and sdch
-	if brw.Header().Get("Content-Encoding") == "gzip" {
-		gzR, err := gzip.NewReader(brw.buffer)
-		if err != nil {
-			return nil, err
-		}
-		defer gzR.Close()
-		gzBuf := bytes.NewBuffer(make([]byte, 0, brw.buffer.Len()))
-		if _, err := io.Copy(gzBuf, gzR); err != nil {
-			return nil, err
-		}
-		body = gzBuf
-	}
-	return body, nil
+	return decodeBodyBuf(brw, brw.buffer)
 }
 
 // SetBody sets the io.Reader from which the new body of the buffered response
@@ -154,18 +177,11 @@ func (brw *BufferedResponseWriter) bodyBuf() (*bytes.Buffer, error) {
 	}
 
 	bodyBuf := bytes.NewBuffer(make([]byte, 0, brw.buffer.Len()))
-	var dst io.Writer = bodyBuf
-
-	if brw.Header().Get("Content-Encoding") == "gzip" {
-		gzW := gzip.NewWriter(bodyBuf)
-		defer gzW.Close()
-		dst = gzW
-
-	} else if bodyBuf2, ok := brw.newBody.(*bytes.Buffer); ok {
-		// shortcut, we don't actually have to do anything if the body we've
-		// been given is already a buffer and we don't have to gzip it
-		return bodyBuf2, nil
+	dst, err := encodeBody(brw, bodyBuf)
+	if err != nil {
+		return nil, err
 	}
+	defer dst.Close()
 
 	// dst will be some wrapper around bodyBuf, or bodyBuf itself
 	if _, err := io.Copy(dst, brw.newBody); err != nil {
@@ -186,4 +202,60 @@ func (brw *BufferedResponseWriter) ActuallyWrite() (int64, error) {
 	rw.Header().Set("Content-Length", strconv.Itoa(bodyBuf.Len()))
 	rw.WriteHeader(brw.code)
 	return io.Copy(rw, bodyBuf)
+}
+
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (n nopWriteCloser) Close() error {
+	if wc, ok := n.Writer.(io.WriteCloser); ok {
+		return wc.Close()
+	}
+	return nil
+}
+
+func encodeBody(hw http.ResponseWriter, w io.Writer) (io.WriteCloser, error) {
+	var wc io.WriteCloser
+	enc := hw.Header().Get("Content-Encoding")
+	switch enc {
+	case "gzip":
+		gzW := gzip.NewWriter(w)
+		wc = gzW
+	case "deflate":
+		// From the docs: If level is in the range [-1, 9] then the error
+		// returned will be nil. Otherwise the error returned will be non-nil
+		// so we can ignore error
+		dfW, _ := flate.NewWriter(w, -1)
+		wc = dfW
+	default:
+		wc = nopWriteCloser{w}
+	}
+	return wc, nil
+}
+
+func decodeBodyBuf(w http.ResponseWriter, buf *bytes.Buffer) (*bytes.Buffer, error) {
+	enc := w.Header().Get("Content-Encoding")
+	switch enc {
+	case "gzip":
+		gzR, err := gzip.NewReader(buf)
+		if err != nil {
+			return nil, err
+		}
+		defer gzR.Close()
+		gzBuf := bytes.NewBuffer(make([]byte, 0, buf.Len()))
+		if _, err := io.Copy(gzBuf, gzR); err != nil {
+			return nil, err
+		}
+		buf = gzBuf
+	case "deflate":
+		dfR := flate.NewReader(buf)
+		defer dfR.Close()
+		dfBuf := bytes.NewBuffer(make([]byte, 0, buf.Len()))
+		if _, err := io.Copy(dfBuf, dfR); err != nil {
+			return nil, err
+		}
+		buf = dfBuf
+	}
+	return buf, nil
 }
