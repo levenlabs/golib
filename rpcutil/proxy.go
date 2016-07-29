@@ -3,13 +3,12 @@ package rpcutil
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"strconv"
-	"sync"
 
 	"golang.org/x/net/context"
 )
@@ -26,38 +25,38 @@ import (
 // Features implemented:
 // * Disable built-in httputil.ReverseProxy logger
 // * Automatically adding X-Forwarded-For
-type HTTPProxy struct {
-	once sync.Once
-	rp   *httputil.ReverseProxy
+type HTTPProxy struct{}
+
+type errWriter struct {
+	errCh chan error
 }
 
-func (h *HTTPProxy) init() {
-	h.once.Do(func() {
-		h.rp = &httputil.ReverseProxy{
-			Director: func(r *http.Request) {},
-			// This is unfortunately the only way to keep the proxy from using
-			// its own log format
-			ErrorLog: log.New(ioutil.Discard, "", 0),
-		}
-	})
+func (e errWriter) Write(p []byte) (n int, err error) {
+	select {
+	case e.errCh <- errors.New(string(p)):
+	default:
+	}
+	return len(p), nil
 }
 
 func (h *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.ServeHTTPCtx(context.Background(), w, r)
+	errCh := h.ServeHTTPCtx(context.Background(), w, r)
+	for range errCh {
+	}
+}
+	}
 }
 
 // ServeHTTPCtx will do the proxying of the given request and write the response
 // to the ResponseWriter. ctx can be used to cancel the request mid-way.
-func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	h.init()
+func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *http.Request) <-chan error {
 	// We only do the cancellation logic if the Cancel channel hasn't been set
 	// on the Request already. If it has, then some other process is liable to
 	// close it also, which would cause a panic
+	doneCh := make(chan struct{})
 	if r.Cancel == nil {
 		cancelCh := make(chan struct{})
 		r.Cancel = cancelCh
-		doneCh := make(chan struct{})
-		defer close(doneCh) // so no matter what the go-routine exits
 		go func() {
 			select {
 			case <-ctx.Done():
@@ -67,7 +66,19 @@ func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *
 		}()
 	}
 	AddProxyXForwardedFor(r, r)
-	h.rp.ServeHTTP(w, r)
+
+	errCh := make(chan error)
+	ew := errWriter{errCh}
+	go func() {
+		rp := &httputil.ReverseProxy{
+			Director: func(r *http.Request) {},
+			ErrorLog: log.New(ew, "", 0),
+		}
+		rp.ServeHTTP(w, r)
+		close(errCh)
+		close(doneCh) // prevent the cancel go-routine from never ending
+	}()
+	return errCh
 }
 
 // BufferedResponseWriter is a wrapper around a real ResponseWriter which
