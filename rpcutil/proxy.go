@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"encoding/gob"
 	"errors"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -151,14 +153,36 @@ func (brw *BufferedResponseWriter) WriteHeader(code int) {
 }
 
 func (brw *BufferedResponseWriter) Write(b []byte) (int, error) {
+	if brw.code == 0 {
+		brw.WriteHeader(200)
+	}
 	return brw.buffer.Write(b)
 }
 
-// GetBody returns a buffer containing the body of the request which was
+// Returns a buffer which will produce the original raw bytes from the
+// response body. May be called multiple times, will return independent buffers
+// each time. The buffers should NEVER be written to
+func (brw *BufferedResponseWriter) originalBodyRaw() *bytes.Buffer {
+	// We take the bytes in the existing buffer, and make a new buffer around
+	// those bytes. This way we can read from the new buffer without draining
+	// the original buffer
+	return bytes.NewBuffer(brw.buffer.Bytes())
+}
+
+// GetBody returns a ReadCloser which gives the body of the response which was
 // buffered. If the response was compressed the body will be transparently
-// decompressed. The contents of the returned buffer should *not* be modified.
-func (brw *BufferedResponseWriter) GetBody() (*bytes.Buffer, error) {
-	return decodeBodyBuf(brw, brw.buffer)
+// decompressed. Close must be called in order to clean up resources. GetBody
+// may be called multiple times, each time it will return an independent
+// ReadCloser for the original response body.
+func (brw *BufferedResponseWriter) GetBody() (io.ReadCloser, error) {
+	buf := brw.originalBodyRaw()
+	switch brw.Header().Get("Content-Encoding") {
+	case "gzip":
+		return gzip.NewReader(buf)
+	case "deflate":
+		return flate.NewReader(buf), nil
+	}
+	return ioutil.NopCloser(buf), nil
 }
 
 // SetBody sets the io.Reader from which the new body of the buffered response
@@ -171,16 +195,19 @@ func (brw *BufferedResponseWriter) SetBody(in io.Reader) {
 	brw.newBody = in
 }
 
+// Returns a buffer containing the (potentially compressed) raw bytes which
+// comprise the body which should be written. If SetBody has been called then
+// that will be used as the body, otherwise the original bytes read in will be
 func (brw *BufferedResponseWriter) bodyBuf() (*bytes.Buffer, error) {
+	body := brw.originalBodyRaw()
 	if brw.newBody == nil {
-		return brw.buffer, nil
+		return body, nil
 	}
 
-	bodyBuf := bytes.NewBuffer(make([]byte, 0, brw.buffer.Len()))
-	dst, err := encodeBody(brw, bodyBuf)
-	if err != nil {
-		return nil, err
-	}
+	// using body.Len() here is just a guess for how big we think the new body
+	// will be
+	bodyBuf := bytes.NewBuffer(make([]byte, 0, body.Len()))
+	dst := brw.bodyEncoder(bodyBuf)
 	defer dst.Close()
 
 	// dst will be some wrapper around bodyBuf, or bodyBuf itself
@@ -215,47 +242,72 @@ func (n nopWriteCloser) Close() error {
 	return nil
 }
 
-func encodeBody(hw http.ResponseWriter, w io.Writer) (io.WriteCloser, error) {
-	var wc io.WriteCloser
-	enc := hw.Header().Get("Content-Encoding")
-	switch enc {
+func (brw *BufferedResponseWriter) bodyEncoder(w io.Writer) io.WriteCloser {
+	switch brw.Header().Get("Content-Encoding") {
 	case "gzip":
-		gzW := gzip.NewWriter(w)
-		wc = gzW
+		return gzip.NewWriter(w)
 	case "deflate":
 		// From the docs: If level is in the range [-1, 9] then the error
 		// returned will be nil. Otherwise the error returned will be non-nil
 		// so we can ignore error
 		dfW, _ := flate.NewWriter(w, -1)
-		wc = dfW
+		return dfW
 	default:
-		wc = nopWriteCloser{w}
+		return nopWriteCloser{w}
 	}
-	return wc, nil
 }
 
-func decodeBodyBuf(w http.ResponseWriter, buf *bytes.Buffer) (*bytes.Buffer, error) {
-	enc := w.Header().Get("Content-Encoding")
-	switch enc {
-	case "gzip":
-		gzR, err := gzip.NewReader(buf)
-		if err != nil {
-			return nil, err
-		}
-		defer gzR.Close()
-		gzBuf := bytes.NewBuffer(make([]byte, 0, buf.Len()))
-		if _, err := io.Copy(gzBuf, gzR); err != nil {
-			return nil, err
-		}
-		buf = gzBuf
-	case "deflate":
-		dfR := flate.NewReader(buf)
-		defer dfR.Close()
-		dfBuf := bytes.NewBuffer(make([]byte, 0, buf.Len()))
-		if _, err := io.Copy(dfBuf, dfR); err != nil {
-			return nil, err
-		}
-		buf = dfBuf
+type brwMarshalled struct {
+	Code   int
+	Header map[string][]string
+	Body   []byte
+}
+
+var _ = func() bool {
+	gob.Register(new(brwMarshalled))
+	return true
+}()
+
+// MarshalBinary returns a binary form of the BufferedResponseWriter. Can only
+// be called after a response has been buffered.
+func (brw *BufferedResponseWriter) MarshalBinary() ([]byte, error) {
+	body := brw.originalBodyRaw().Bytes()
+	bm := brwMarshalled{
+		Code:   brw.code,
+		Header: brw.Header(),
+		Body:   body,
 	}
-	return buf, nil
+	buf := new(bytes.Buffer)
+	if err := gob.NewEncoder(buf).Encode(&bm); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// UnmarshalBinary takes in a byte slice produced by calling MarshalBinary on
+// another BufferedResponseWriter, and makes this one identical to it.
+func (brw *BufferedResponseWriter) UnmarshalBinary(b []byte) error {
+	var bm brwMarshalled
+	if err := gob.NewDecoder(bytes.NewBuffer(b)).Decode(&bm); err != nil {
+		return err
+	}
+
+	brw.code = bm.Code
+
+	// If there's any pre-set headers in the ResponseWriter, get rid of them
+	h := brw.Header()
+	for k := range h {
+		delete(h, k)
+	}
+
+	// Now copy in the headers we want
+	for k, vv := range bm.Header {
+		for _, v := range vv {
+			h.Add(k, v)
+		}
+	}
+
+	// Copy in the body
+	brw.buffer = bytes.NewBuffer(bm.Body)
+	return nil
 }
