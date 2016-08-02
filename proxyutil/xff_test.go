@@ -1,4 +1,4 @@
-package rpcutil
+package proxyutil
 
 import (
 	"net/http"
@@ -56,7 +56,7 @@ func TestXFF(t *T) {
 		"::1", "fd00::1", "1::1", "2::2")
 }
 
-func TestAddProxyXForwardedFor(t *T) {
+func TestAddXForwardedFor(t *T) {
 	xffCases := []struct {
 		xffs     []string
 		expected string
@@ -77,7 +77,7 @@ func TestAddProxyXForwardedFor(t *T) {
 
 		out, err := http.NewRequest("GET", "/", nil)
 		require.Nil(t, err)
-		AddProxyXForwardedFor(out, r)
+		AddXForwardedFor(out, r)
 		assert.Equal(
 			t, xffCase.expected, out.Header.Get("X-Forwarded-For"),
 			"input headers: %v", xffCase.xffs,

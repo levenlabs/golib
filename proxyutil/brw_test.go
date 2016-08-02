@@ -1,4 +1,4 @@
-package rpcutil
+package proxyutil
 
 import (
 	"bytes"
