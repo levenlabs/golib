@@ -26,6 +26,19 @@ type Configurator interface {
 	WithParams(*lever.Lever)
 }
 
+// NoConfig implements Configurator, but doesn't actually do anything. Useful
+// for things which will be added to Config but which don't need any
+// configuration
+type NoConfig struct{}
+
+// Params always returns nil
+func (NoConfig) Params() []lever.Param {
+	return nil
+}
+
+// WithParams does nothing
+func (NoConfig) WithParams(*lever.Lever) {}
+
 // TODO having the fields in Config be public is inconsistent with CallerConfig
 
 // Config wraps a set of Configurators together and attempts to resolve and

@@ -4,6 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+
+	"github.com/levenlabs/go-llog"
+	"github.com/mediocregopher/lever"
 )
 
 // TODO write some damn tests
@@ -11,7 +14,63 @@ import (
 // TLSLoader loads a set of tls certificates to use when listening on a TLS
 // enabled connection
 type TLSLoader interface {
+	Configurator
 	Load() ([]tls.Certificate, error)
+}
+
+// FileTLSLoader is a TLSLoader which will load one or more cert/key file
+// combinations based on configuration
+type FileTLSLoader struct {
+	certFiles []string
+	keyFiles  []string
+}
+
+// TODO it's somewhat unfortunate that these arguments will overlap even if two
+// different listeners want to use two different sets of tls files. Maybe useful
+// to have a prefix be passed in by Params and WithParams somehow? not sure how
+// that would work. Or maybe the prefix should just be part of FileTLSLoader.
+// But I feel like that kind of functionality will be wanted for pretty much
+// everything that could be configured (i.e. multiple of the same thing can be
+// configured in different ways)
+
+// Params implements the method for Configurator
+func (f *FileTLSLoader) Params() []lever.Param {
+	return []lever.Param{
+		{
+			Name:        "--tls-cert-file",
+			Description: "Certificate file to use for TLS. Maybe be specified more than once. Each cert file must correspond with a matching key file",
+		},
+		{
+			Name:        "--tls-key-file",
+			Description: "Key file to use for TLS. Maybe be specified more than once. Each key file must correspond with a matching cert file",
+		},
+	}
+}
+
+// WithParams implements the method for Configurator
+func (f *FileTLSLoader) WithParams(l *lever.Lever) {
+	f.certFiles, _ = l.ParamStrs("--tls-cert-file")
+	f.keyFiles, _ = l.ParamStrs("--tls-key-file")
+	if len(f.certFiles) != len(f.keyFiles) {
+		llog.Fatal("number of --tls-cert-file must match number of --tls-key-file")
+	}
+}
+
+// Load implenets the method for TLSLoader. It will re-read the configured files
+// every time it is called
+func (f *FileTLSLoader) Load() ([]tls.Certificate, error) {
+	var ret []tls.Certificate
+	for i := range f.certFiles {
+		c, err := tls.LoadX509KeyPair(f.certFiles[i], f.keyFiles[i])
+		if err != nil {
+			return nil, llog.ErrWithKV(err, llog.KV{
+				"certFile": f.certFiles[i],
+				"keyFiles": f.keyFiles[i],
+			})
+		}
+		ret = append(ret, c)
+	}
+	return ret, nil
 }
 
 // Listener is what is returned by ListenerTpl
@@ -48,14 +107,47 @@ type ListenerTpl struct {
 	TLSLoader
 }
 
+// Params implements the Configurator method. It will include the Params from
+// its TLSLoader, if that is set
+func (l *ListenerTpl) Params() []lever.Param {
+	addr := l.Addr
+	if addr == "" {
+		addr = ":0"
+	}
+	params := []lever.Param{
+		{
+			Name:        "--listen-addr",
+			Description: "[address]:port to listen. If port is zero a port will be chosen randomly",
+			Default:     addr,
+		},
+	}
+
+	if l.TLSLoader != nil {
+		params = append(params, l.TLSLoader.Params()...)
+	}
+	return params
+}
+
+// WithParams implements the Configurator method. It will also call the
+// WithParams method on its TLSLoader, if that is set
+func (l *ListenerTpl) WithParams(lever *lever.Lever) {
+	l.Addr, _ = lever.ParamStr("--listen-addr")
+	if l.TLSLoader != nil {
+		l.TLSLoader.WithParams(lever)
+	}
+}
+
 // Listener creates a listen socket on the Network/Addr in the template, and
 // configures per the other template fields, returning the Listener
 func (l ListenerTpl) Listener() (*Listener, error) {
+	if l.Network == "" {
+		l.Network = "tcp"
+	}
 	if l.Addr == "" {
 		l.Addr = ":0"
 	}
 
-	ln, err := net.Listen("tcp", l.Addr)
+	ln, err := net.Listen(l.Network, l.Addr)
 	if err != nil {
 		return nil, fmt.Errorf("creating listen addr on %s: %s", l.Addr, err)
 	}
