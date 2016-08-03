@@ -4,10 +4,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"os"
 	"runtime"
 	"time"
 
 	"github.com/levenlabs/go-llog"
+	"github.com/levenlabs/golib/proxyutil"
+	"github.com/mediocregopher/lever"
 )
 
 // TODO test this noise
@@ -40,6 +43,36 @@ type HandlerTpl struct {
 	// Optional, defaults to the return of os.Hostname, used to populate the
 	// X-Hostname header on all responses
 	Hostname string
+}
+
+// Params implements the Configurator method. It will also include any params
+// returned by Healthers set in the Healthers map.
+func (htpl *HandlerTpl) Params() []lever.Param {
+	hostname := htpl.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
+	ret := []lever.Param{
+		{
+			Name:        "--hostname",
+			Description: "The hostname to include in http responses",
+			Default:     hostname,
+			NoEnvPrefix: true,
+		},
+	}
+	for _, h := range htpl.Healthers {
+		ret = append(ret, h.Params()...)
+	}
+	return ret
+}
+
+// WithParams implements the Configurator method. It will also call WithParams
+// on any Healthers set in the Healthers map
+func (htpl *HandlerTpl) WithParams(l *lever.Lever) {
+	htpl.Hostname, _ = l.ParamStr("--hostname")
+	for _, h := range htpl.Healthers {
+		h.WithParams(l)
+	}
 }
 
 // Handler returns the an instance of http.Handler based on the template's
@@ -77,8 +110,20 @@ func (htpl HandlerTpl) Handler() (http.Handler, error) {
 	}()
 	h.Handler = ch
 
+	// set X-Hostname on all requests (if it can be determined
+	hostname := htpl.Hostname
+	if htpl.Hostname == "" {
+		hostname, _ = os.Hostname()
+	}
+	if hostname != "" {
+		h.Handler = headerHandler(h.Handler, "X-Hostname", hostname)
+	}
+
 	// context TODO might not actually be needed at all
 	h.Handler = contextHandler(h.Handler)
+
+	// Fix RemoteAddr in the case of X-Forwarded-For
+	h.Handler = xffHandler(h.Handler)
 
 	return h, nil
 }
@@ -88,6 +133,7 @@ func (htpl HandlerTpl) Handler() (http.Handler, error) {
 // saying that it could potentially do it's job but at the moment is should not
 // be relied on to do so
 type Healther interface {
+	Configurator
 	Healthy() error
 }
 
@@ -131,6 +177,28 @@ func pprofHandler() http.Handler {
 			http.Error(w, "", 403) // forbidden
 			return
 		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func xffHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer h.ServeHTTP(w, r)
+
+		_, portStr, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return
+		}
+
+		r.RemoteAddr = proxyutil.RequestIP(r) + ":" + portStr
+	})
+}
+
+// TODO when writing call stuff, remember to add X-Forwarded-For
+
+func headerHandler(h http.Handler, k, v string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set(k, v)
 		h.ServeHTTP(w, r)
 	})
 }

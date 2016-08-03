@@ -7,6 +7,10 @@ import (
 	"github.com/mediocregopher/lever"
 )
 
+// TODO it should be a goal that all Configurators implemented in this package
+// can be used independently, i.e. that they don't actually need Configure
+// called, they can just have their fields changed directly or whatever
+
 // Configurator is an entity which can take in parameters from the command-line,
 // evironment variables, or a config file, before running
 type Configurator interface {
