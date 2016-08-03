@@ -1,116 +1,30 @@
-package rpcutil
+package proxyutil
 
 import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
 	"encoding/gob"
-	"errors"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"net/http/httputil"
 	"strconv"
-	"strings"
-
-	"golang.org/x/net/context"
 )
 
-// HTTPProxy is also hella deprecated, see ReverseProxy in the proxyutil package
-type HTTPProxy struct{}
+// BufferedResponseWriterEncodings is the set of encodings that
+// BufferedResponseWriter supports
+var BufferedResponseWriterEncodings = []string{"gzip", "deflate"}
 
-type errWriter struct {
-	errCh chan error
-}
-
-func (e errWriter) Write(p []byte) (n int, err error) {
-	select {
-	case e.errCh <- errors.New(string(p)):
-	default:
-	}
-	return len(p), nil
-}
-
-func (h *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	errCh := h.ServeHTTPCtx(context.Background(), w, r)
-	for range errCh {
-	}
-}
-
-const defaultEncodings = "gzip, deflate"
-
-func encodingSupported(enc string) bool {
-	switch enc {
-	case "gzip":
-		return true
-	case "deflate":
-		return true
-	}
-	return false
-}
-
-// our director adjusts the Accept-Encoding to only supported encodings
-func director(r *http.Request) {
-	ae := r.Header.Get("Accept-Encoding")
-	if ae == "*" {
-		r.Header.Set("Accept-Encoding", defaultEncodings)
-	} else if ae == "" {
-		return
-	}
-	aep := strings.Split(ae, ",")
-	newaep := make([]string, 0, len(aep))
-	for _, e := range aep {
-		// since were splitting on , there might be a space before
-		e = strings.TrimSpace(e)
-		// according to the spec, there also might be a q value after a
-		// semicolon, we don't really care about the q ourselves so ignore
-		ep := strings.Split(e, ";")
-		e = ep[0]
-		if encodingSupported(e) {
-			// send the original q value since that means something special
-			newaep = append(newaep, strings.Join(ep, ";"))
-		}
-	}
-	r.Header.Set("Accept-Encoding", strings.Join(newaep, ", "))
-}
-
-// ServeHTTPCtx will do the proxying of the given request and write the response
-// to the ResponseWriter. ctx can be used to cancel the request mid-way.
-func (h *HTTPProxy) ServeHTTPCtx(ctx context.Context, w http.ResponseWriter, r *http.Request) <-chan error {
-	// We only do the cancellation logic if the Cancel channel hasn't been set
-	// on the Request already. If it has, then some other process is liable to
-	// close it also, which would cause a panic
-	doneCh := make(chan struct{})
-	if r.Cancel == nil {
-		cancelCh := make(chan struct{})
-		r.Cancel = cancelCh
-		go func() {
-			select {
-			case <-ctx.Done():
-			case <-doneCh:
-			}
-			close(cancelCh)
-		}()
-	}
-	AddProxyXForwardedFor(r, r)
-
-	errCh := make(chan error)
-	ew := errWriter{errCh}
-	go func() {
-		rp := &httputil.ReverseProxy{
-			Director: director,
-			ErrorLog: log.New(ew, "", 0),
-		}
-		rp.ServeHTTP(w, r)
-		close(errCh)
-		close(doneCh) // prevent the cancel go-routine from never ending
-	}()
-	return errCh
-}
-
-// BufferedResponseWriter is hella deprecated and has been moved into the
-// proxyutil package
+// BufferedResponseWriter is a wrapper around a real ResponseWriter which
+// actually writes all data to a buffer instead of the ResponseWriter. It also
+// catches calls to WriteHeader. Once writing is done, GetBody can be called to
+// get the buffered body, and SetBody can be called to set a new body to be
+// used.  When ActuallyWrite is called all headers will be written to the
+// ResponseWriter (with corrected Content-Length if SetBody was called),
+// followed by the body.
+//
+// BufferedResponseWriter will transparently handle uncompressing and
+// recompressing the response body when it sees a known Content-Encoding.
 type BufferedResponseWriter struct {
 	http.ResponseWriter
 	buffer  *bytes.Buffer
@@ -119,9 +33,6 @@ type BufferedResponseWriter struct {
 	code int
 }
 
-// NewBufferedResponseWriter is deprecated, see the BufferedResponseWriter doc
-// comment
-//
 // NewBufferedResponseWriter returns an initialized BufferedResponseWriter,
 // which will catch writes going to the given ResponseWriter
 func NewBufferedResponseWriter(rw http.ResponseWriter) *BufferedResponseWriter {
@@ -247,11 +158,6 @@ type brwMarshalled struct {
 	Header map[string][]string
 	Body   []byte
 }
-
-var _ = func() bool {
-	gob.Register(new(brwMarshalled))
-	return true
-}()
 
 // MarshalBinary returns a binary form of the BufferedResponseWriter. Can only
 // be called after a response has been buffered.
