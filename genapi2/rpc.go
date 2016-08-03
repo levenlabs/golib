@@ -20,7 +20,7 @@ type RPCTpl struct {
 	// generic message
 	HideServeErrors bool
 
-	// All method names in this slice will not be logged at all when the occur
+	// All method names in this slice will not be logged at all when they occur
 	ExcludeMethodLog []string
 
 	// Appliers is a list of functions which will be run on incoming arguments
