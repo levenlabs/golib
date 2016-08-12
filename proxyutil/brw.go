@@ -30,7 +30,7 @@ type BufferedResponseWriter struct {
 	buffer  *bytes.Buffer
 	newBody io.Reader
 
-	code int
+	Code int
 }
 
 // NewBufferedResponseWriter returns an initialized BufferedResponseWriter,
@@ -45,11 +45,11 @@ func NewBufferedResponseWriter(rw http.ResponseWriter) *BufferedResponseWriter {
 // WriteHeader catches the call to WriteHeader and doesn't actually do anything,
 // except store the given code for later use when ActuallyWrite is called
 func (brw *BufferedResponseWriter) WriteHeader(code int) {
-	brw.code = code
+	brw.Code = code
 }
 
 func (brw *BufferedResponseWriter) Write(b []byte) (int, error) {
-	if brw.code == 0 {
+	if brw.Code == 0 {
 		brw.WriteHeader(200)
 	}
 	return brw.buffer.Write(b)
@@ -123,7 +123,7 @@ func (brw *BufferedResponseWriter) ActuallyWrite() (int64, error) {
 
 	rw := brw.ResponseWriter
 	rw.Header().Set("Content-Length", strconv.Itoa(bodyBuf.Len()))
-	rw.WriteHeader(brw.code)
+	rw.WriteHeader(brw.Code)
 	return io.Copy(rw, bodyBuf)
 }
 
@@ -164,7 +164,7 @@ type brwMarshalled struct {
 func (brw *BufferedResponseWriter) MarshalBinary() ([]byte, error) {
 	body := brw.originalBodyRaw().Bytes()
 	bm := brwMarshalled{
-		Code:   brw.code,
+		Code:   brw.Code,
 		Header: brw.Header(),
 		Body:   body,
 	}
@@ -183,7 +183,7 @@ func (brw *BufferedResponseWriter) UnmarshalBinary(b []byte) error {
 		return err
 	}
 
-	brw.code = bm.Code
+	brw.Code = bm.Code
 
 	// If there's any pre-set headers in the ResponseWriter, get rid of them
 	h := brw.Header()
