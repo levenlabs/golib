@@ -31,7 +31,7 @@ type RedisTpl struct {
 	// read/write timeout
 	Timeout time.Duration
 
-	// If set then this will be used to resolve Addr (by way of MaybeSrv) on
+	// If set then this will be used to resolve Addr (by way of MaybeSRV) on
 	// every new connection being made
 	SRVClient *srvclient.SRVClient
 }
