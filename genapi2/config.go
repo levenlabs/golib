@@ -13,6 +13,9 @@ import (
 
 // Configurator is an entity which can take in parameters from the command-line,
 // evironment variables, or a config file, before running
+//
+// A Configurator shouldn't need the Params or WithParams called on it in order
+// to be used. It should have defaults already set and be usable in that state.
 type Configurator interface {
 
 	// Params should return the parameters this Configurator needs in order to
@@ -125,4 +128,44 @@ func (c Config) configurate() error {
 		cc.WithParams(l)
 	}
 	return nil
+}
+
+// ConfigCommon encompasses some common options and utility methods to be used
+// in implementing Configurator methods
+type ConfigCommon struct {
+	// If set this can be used in conjunction with Param or ParamName to add a
+	// string to the beginning of a param name. For example, if Prefix is "foo",
+	// and a Param.Name is "--bar-baz", then the actual Param.Name will be
+	// "--foo-bar-baz"
+	Prefix string
+
+	// If set this can be used in conjunction with Param to indicate a Param is
+	// optional
+	Optional bool
+}
+
+// ParamName takes the name of a parameter and returns it's "actual" name,
+// taking Prefix into account. For example, if Prefix is "foo", and a Param.Name
+// is "--bar-baz", then the actual Param.Name will be "--foo-bar-baz"
+func (cc ConfigCommon) ParamName(n string) string {
+	if cc.Prefix != "" {
+		n = "--" + cc.Prefix + "-" + n[2:]
+	}
+	return n
+}
+
+// Param takes a fully formed param and returns a modified version of it which
+// takes into account the fields of ConfigCommon
+func (cc ConfigCommon) Param(p lever.Param) lever.Param {
+	if cc.Prefix != "" {
+		p.Name = "--" + cc.Prefix + "-" + p.Name[2:]
+	}
+	if cc.Optional {
+		if p.Description == "" {
+			p.Description = "Optional"
+		} else {
+			p.Description = "Optional. " + p.Description
+		}
+	}
+	return p
 }
