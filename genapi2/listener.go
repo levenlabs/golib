@@ -21,36 +21,30 @@ type TLSLoader interface {
 // FileTLSLoader is a TLSLoader which will load one or more cert/key file
 // combinations based on configuration
 type FileTLSLoader struct {
+	ConfigCommon
+
 	certFiles []string
 	keyFiles  []string
 }
 
-// TODO it's somewhat unfortunate that these arguments will overlap even if two
-// different listeners want to use two different sets of tls files. Maybe useful
-// to have a prefix be passed in by Params and WithParams somehow? not sure how
-// that would work. Or maybe the prefix should just be part of FileTLSLoader.
-// But I feel like that kind of functionality will be wanted for pretty much
-// everything that could be configured (i.e. multiple of the same thing can be
-// configured in different ways)
-
 // Params implements the method for Configurator
 func (f *FileTLSLoader) Params() []lever.Param {
 	return []lever.Param{
-		{
+		f.Param(lever.Param{
 			Name:        "--tls-cert-file",
 			Description: "Certificate file to use for TLS. Maybe be specified more than once. Each cert file must correspond with a matching key file",
-		},
-		{
+		}),
+		f.Param(lever.Param{
 			Name:        "--tls-key-file",
 			Description: "Key file to use for TLS. Maybe be specified more than once. Each key file must correspond with a matching cert file",
-		},
+		}),
 	}
 }
 
 // WithParams implements the method for Configurator
 func (f *FileTLSLoader) WithParams(l *lever.Lever) {
-	f.certFiles, _ = l.ParamStrs("--tls-cert-file")
-	f.keyFiles, _ = l.ParamStrs("--tls-key-file")
+	f.certFiles, _ = l.ParamStrs(f.ParamName("--tls-cert-file"))
+	f.keyFiles, _ = l.ParamStrs(f.ParamName("--tls-key-file"))
 	if len(f.certFiles) != len(f.keyFiles) {
 		llog.Fatal("number of --tls-cert-file must match number of --tls-key-file")
 	}
@@ -92,6 +86,8 @@ func (l *Listener) Reload() error {
 // ListenerTpl describes information needed to create a net.Listener which will
 // process tcp connections
 type ListenerTpl struct {
+	ConfigCommon
+
 	// Defaults to "tcp"
 	Network string
 
@@ -107,23 +103,30 @@ type ListenerTpl struct {
 	TLSLoader
 }
 
+func (l ListenerTpl) withDefaults() ListenerTpl {
+	if l.Network == "" && !l.Optional {
+		l.Network = "tcp"
+	}
+	if l.Addr == "" && !l.Optional {
+		l.Addr = ":0"
+	}
+	return l
+}
+
 // Params implements the Configurator method. It will include the Params from
 // its TLSLoader, if that is set
 func (l *ListenerTpl) Params() []lever.Param {
-	addr := l.Addr
-	if addr == "" {
-		addr = ":0"
-	}
+	ll := l.withDefaults()
 	params := []lever.Param{
-		{
+		l.Param(lever.Param{
 			Name:        "--listen-addr",
 			Description: "[address]:port to listen. If port is zero a port will be chosen randomly",
-			Default:     addr,
-		},
+			Default:     ll.Addr,
+		}),
 	}
 
-	if l.TLSLoader != nil {
-		params = append(params, l.TLSLoader.Params()...)
+	if ll.TLSLoader != nil {
+		params = append(params, ll.TLSLoader.Params()...)
 	}
 	return params
 }
@@ -140,12 +143,7 @@ func (l *ListenerTpl) WithParams(lever *lever.Lever) {
 // Listener creates a listen socket on the Network/Addr in the template, and
 // configures per the other template fields, returning the Listener
 func (l ListenerTpl) Listener() (*Listener, error) {
-	if l.Network == "" {
-		l.Network = "tcp"
-	}
-	if l.Addr == "" {
-		l.Addr = ":0"
-	}
+	l = l.withDefaults()
 
 	ln, err := net.Listen(l.Network, l.Addr)
 	if err != nil {
