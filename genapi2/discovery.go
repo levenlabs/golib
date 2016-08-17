@@ -13,6 +13,21 @@ import (
 	"github.com/miekg/dns"
 )
 
+// Resolver is used to resolve arbitrary names of services to a single address,
+// possibly selected out of many addresses. An address consists of "host:port".
+type Resolver interface {
+	// Takes in some arbitrary name and returns an address for that name. Must
+	// be able to handle the given string already being an address.
+	Resolve(string) (string, error)
+}
+
+func maybeResolve(r Resolver, addr string) (string, error) {
+	if r == nil {
+		return addr, nil
+	}
+	return r.Resolve(addr)
+}
+
 func dcPrefix(dc string) string {
 	dcHash := sha1.Sum([]byte(ll.Datacenter))
 	return hex.EncodeToString(dcHash[:])[:20]

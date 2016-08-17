@@ -5,118 +5,61 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"reflect"
 
 	"github.com/levenlabs/go-llog"
-	"github.com/levenlabs/go-srvclient"
 	"github.com/levenlabs/lrpc/lrpchttp/json2"
-	"github.com/mediocregopher/lever"
 	"golang.org/x/net/context"
 	"golang.org/x/net/context/ctxhttp"
 )
 
-// Resolver is used to resolve arbitrary names of services to a single address,
-// possibly selected out of many addresses. An address consists of "host:port".
-type Resolver interface {
-	// Takes in some arbitrary name and returns an address for that name. Must
-	// be able to handle the given string already being an address.
-	Resolve(string) (string, error)
-}
-
-func maybeResolve(r Resolver, addr string) (string, error) {
-	if r == nil {
-		return addr, nil
-	}
-	return r.Resolve(addr)
-}
-
-// Remoter provides functionality for interacting with other remote interfaces.
-// Primarily it handles making SRV calls to resolve addresses.
-// TODO better name
-type Remoter struct {
-	remotes map[string]string    // maps remote name to its base address (pre-srv)
-	srv     *srvclient.SRVClient // TODO make this a Resolver
-}
-
-// NewRemoter returns an initialized Remoter. Add should be called immediately
-// after this to make the Remoter actually aware of other remotes
-func NewRemoter() Remoter {
-	// TODO datacenter stuff... somehow
-	srv := &srvclient.SRVClient{}
-	srv.EnableCacheLast()
-	return Remoter{
-		remotes: map[string]string{},
-		srv:     srv,
-	}
-}
-
-// Add makes the Remoter able to resolve a new remote interface. The remote is
-// identified by name, and has a default address of the one given (can be empty
-// string). This default address will be the one which has SRV called on it,
-// unless overwritten by WithParams.
-func (r Remoter) Add(name, def string) {
-	r.remotes[name] = def
-}
-
-// Params returns the param definitions for all the remote interfaces which have
-// been Add'd thusfar
-func (r Remoter) Params() []lever.Param {
-	var pp []lever.Param
-	for name, def := range r.remotes {
-		pp = append(pp, lever.Param{
-			Name:        "--" + name,
-			Description: "Address of " + name + ", which will be DNS SRV resolved if neededn",
-			Default:     def,
-		})
-	}
-	return pp
-}
-
-// WithParams populates its remotes with new addresses to resolve, if any were
-// given in the lever.
-func (r Remoter) WithParams(l *lever.Lever) {
-	for name, def := range r.remotes {
-		if addr, _ := l.ParamStr("--" + name); addr != "" {
-			r.remotes[name] = addr
-		} else if def == "" {
-			llog.Fatal("remote address not set", llog.KV{"name": "--" + name})
-		}
-	}
-}
-
-// Addr returns a host:port address for the remote Add'd with the given name
-func (r Remoter) Addr(name string) string {
-	return r.srv.MaybeSRV(r.remotes[name])
-}
-
-// URL returns a *url.URL with the given scheme and path, and a host for the
-// given name returned from Addr
-func (r Remoter) URL(scheme, name, path string) *url.URL {
-	return &url.URL{
-		Scheme: scheme,
-		Host:   r.Addr(name),
-		Path:   path,
-	}
-}
-
-// Caller provides a way of calling RPC methods against another remote endpoint
-type Caller interface {
+// RPCCaller is an interface which makes RPC calls against a single logical
+// endpoint
+type RPCCaller interface {
 	// Call does the actual work. It will method and args are sent to the remote
 	// endpoint, and the result is unmarshalled into res (which should be a
 	// pointer).
 	Call(ctx context.Context, res interface{}, method string, args interface{}) error
 }
 
-type remoterCaller struct {
-	name string
-	r    Remoter
+// RPCCallerStub provides a convenient way to make stubbed endpoints for testing
+type RPCCallerStub func(method string, args interface{}) (interface{}, error)
+
+// Call implements the Call method for the Caller interface. It passed method
+// and args to the underlying RPCCallerStub function. The returned interface
+// from that function is assigned to res (if the underlying types for them are
+// compatible). The passed in context is ignored.
+func (rcs RPCCallerStub) Call(_ context.Context, res interface{}, method string, args interface{}) error {
+	csres, err := rcs(method, args)
+	if err != nil {
+		return err
+	}
+
+	if res == nil {
+		return nil
+	}
+
+	vres := reflect.ValueOf(res).Elem()
+	vres.Set(reflect.ValueOf(csres))
+	return nil
 }
 
-// TODO confirm that we want path to be jsonrpc2
-// TODO confirm what we want to do about context
-// TODO X-Forwarded-For
+// LLRPCCaller is Leven Lab's implementation of RPCCaller that it uses in
+// conjunction with its RPC services
+type LLRPCCaller struct {
+	Remote
+}
 
-func (rc remoterCaller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
-	u := rc.r.URL("http", rc.name, "/jsonrpc2").String()
+// Call implements the RPCCaller interface
+// TODO confirm what we want to do about context
+func (ll LLRPCCaller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
+	addr, err := ll.Remote.Addr()
+	if err != nil {
+		return err
+	}
+
+	// TODO confirm that we want path to be jsonrpc2
+	u := &url.URL{Schem: "http", Host: addr, Path: "/jsonrpc2"}
 	kv := llog.KV{"url": u, "method": method}
 
 	jr, err := json2.NewRequest(method, args)
@@ -133,8 +76,10 @@ func (rc remoterCaller) Call(ctx context.Context, res interface{}, method string
 	if err != nil {
 		return llog.ErrWithKV(err, kv)
 	}
+	// TODO X-Forwarded-For
 	r.Header.Set("Content-Type", "application/json")
 
+	// TODO we don't need to do this this way anymore
 	resp, err := ctxhttp.Do(ctx, http.DefaultClient, r)
 	if err != nil {
 		return llog.ErrWithKV(err, kv)
@@ -157,10 +102,4 @@ func (rc remoterCaller) Call(ctx context.Context, res interface{}, method string
 	}
 
 	return nil
-}
-
-// Caller returns a Caller instance which will perform calls specifically for
-// the given remote interface
-func (r Remoter) Caller(name string) Caller {
-	return remoterCaller{name: name, r: r}
 }
