@@ -21,6 +21,9 @@ type MongoTpl struct {
 
 	// Optional map of collection name to indexes to ensure are set on Connect
 	Indexes map[string][]mgo.Index
+
+	// If set then this will be used to resolve Addr
+	Resolver
 }
 
 func (mtpl MongoTpl) withDefaults() MongoTpl {
@@ -60,7 +63,13 @@ func (mtpl MongoTpl) Connect() Mongo {
 	kv := llog.KV{"addr": mtpl.Addr}
 	llog.Info("dialing mongo", kv)
 
-	s, err := mgo.DialWithTimeout(mtpl.Addr, 5*time.Second)
+	addr, err := maybeResolve(mtpl.Resolver, mtpl.Addr)
+	if err != nil {
+		llog.Fatal("could not resolve mongo address", kv, llog.ErrKV(err))
+	}
+	kv["addr"] = addr
+
+	s, err := mgo.DialWithTimeout(addr, 5*time.Second)
 	if err != nil {
 		llog.Fatal("error calling mgo.DialWithTimeout", kv, llog.ErrKV(err))
 	}

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/levenlabs/go-llog"
-	"github.com/levenlabs/go-srvclient"
 	"github.com/mediocregopher/lever"
 	"github.com/mediocregopher/okq-go.v2"
 	"github.com/mediocregopher/radix.v2/pool"
@@ -25,9 +24,9 @@ type OkqTpl struct {
 	// the network connections and the NotifyTimeout for Client.
 	Timeout time.Duration
 
-	// If set then this will be used to resolve Addr (by way of MaybeSRV) on
-	// every new connection being made
-	SRVClient *srvclient.SRVClient
+	// If set then this will be used to resolve Addr on every new connection
+	// being made
+	Resolver
 }
 
 func (otpl OkqTpl) withDefaults() OkqTpl {
@@ -90,10 +89,10 @@ func (otpl OkqTpl) Connect() Okq {
 	// creates a pool
 
 	c, err := RedisTpl{
-		Addr:      otpl.Addr,
-		PoolSize:  otpl.PoolSize,
-		Timeout:   otpl.Timeout,
-		SRVClient: otpl.SRVClient,
+		Addr:     otpl.Addr,
+		PoolSize: otpl.PoolSize,
+		Timeout:  otpl.Timeout,
+		Resolver: otpl.Resolver,
 	}.connect()
 	if err != nil {
 		llog.Fatal("error connecting to okq", kv, llog.ErrKV(err))

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/levenlabs/go-llog"
-	"github.com/levenlabs/go-srvclient"
 	"github.com/mediocregopher/lever"
 	"github.com/mediocregopher/radix.v2/cluster"
 	"github.com/mediocregopher/radix.v2/pool"
@@ -31,9 +30,9 @@ type RedisTpl struct {
 	// read/write timeout
 	Timeout time.Duration
 
-	// If set then this will be used to resolve Addr (by way of MaybeSRV) on
-	// every new connection being made
-	SRVClient *srvclient.SRVClient
+	// If set then this will be used to resolve Addr on every new connection
+	// being made
+	Resolver
 }
 
 func (rtpl RedisTpl) withDefaults() RedisTpl {
@@ -101,8 +100,9 @@ func (rtpl RedisTpl) Connect() Redis {
 
 func (rtpl RedisTpl) connect() (util.Cmder, error) {
 	df := func(network, addr string) (*redis.Client, error) {
-		if rtpl.SRVClient != nil {
-			addr = rtpl.SRVClient.MaybeSRV(addr)
+		addr, err := maybeResolve(rtpl.Resolver, addr)
+		if err != nil {
+			return nil, err
 		}
 		return redis.DialTimeout(network, addr, rtpl.Timeout)
 	}
