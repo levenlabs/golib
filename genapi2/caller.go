@@ -2,18 +2,14 @@ package genapi
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/levenlabs/go-llog"
 	"github.com/levenlabs/go-srvclient"
 	"github.com/levenlabs/lrpc/lrpchttp/json2"
 	"github.com/mediocregopher/lever"
-	"github.com/miekg/dns"
 	"golang.org/x/net/context"
 	"golang.org/x/net/context/ctxhttp"
 )
@@ -31,51 +27,6 @@ func maybeResolve(r Resolver, addr string) (string, error) {
 		return addr, nil
 	}
 	return r.Resolve(addr)
-}
-
-// LLResolver is used by Leven Labs projects to find each other. It resolves
-// using a SRV request in conjunction with some extra logic to make it DC-aware,
-// so if Datacenter is set it will prefer entries from the same datacenter
-type LLResolver struct {
-	*srvclient.SRVClient
-
-	// Optional string name of the datacenter
-	Datacenter string
-}
-
-// NewLLResolver returns a new LLResolver with an initialized SRVClient
-func NewLLResolver() Resolver {
-	s := &srvclient.SRVClient{}
-	s.EnableCacheLast()
-	ll := &LLResolver{SRVClient: s}
-
-	ll.SRVClient.Preprocess = func(m *dns.Msg) {
-		if ll.Datacenter == "" {
-			return
-		}
-
-		dcHashRaw := sha1.Sum([]byte(ll.Datacenter))
-		dcHash := hex.EncodeToString(dcHashRaw[:])[:20]
-		for i := range m.Answer {
-			if ansSRV, ok := m.Answer[i].(*dns.SRV); ok {
-				tar := ansSRV.Target
-				if strings.HasPrefix(tar, dcHash+"-") {
-					if ansSRV.Priority < 2 {
-						ansSRV.Priority = uint16(0)
-					} else {
-						ansSRV.Priority = ansSRV.Priority - 1
-					}
-				}
-			}
-		}
-	}
-
-	return ll
-}
-
-// Resolve implements the method for Resolver
-func (ll *LLResolver) Resolve(a string) (string, error) {
-	return ll.SRV(a)
 }
 
 // Remoter provides functionality for interacting with other remote interfaces.
