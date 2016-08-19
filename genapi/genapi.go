@@ -881,7 +881,7 @@ func (g *GenAPI) doSkyAPI() chan struct{} {
 				Prefix:            dc,
 			})
 			if err != nil {
-				llog.Error("skyapi error", kv.Set("err", err))
+				llog.Warn("skyapi error", kv.Set("err", err))
 				time.Sleep(1 * time.Second)
 			} else {
 				// If there wasn't an error but skyapi stopped, it's because the
