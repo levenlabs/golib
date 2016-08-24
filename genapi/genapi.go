@@ -421,6 +421,21 @@ func (g *GenAPI) hostnameHandler(h http.Handler) http.Handler {
 // may only be called after TestMode or CLIMode has been called, it is
 // automatically done for APIMode.
 func (g *GenAPI) RPCListen() {
+	g.countCh = make(chan bool)
+	go func() {
+		t := time.Tick(1 * time.Minute)
+		var c uint64
+		for {
+			select {
+			case <-g.countCh:
+				c++
+			case <-t:
+				llog.Info("count requests in last minute", llog.KV{"count": c})
+				c = 0
+			}
+		}
+	}()
+
 	if g.RPCEndpoint != "_" {
 		g.Mux.Handle(g.RPCEndpoint, g.RPC())
 	}
@@ -674,21 +689,6 @@ func (g *GenAPI) init() {
 			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
 		}
 	}
-
-	g.countCh = make(chan bool)
-	go func() {
-		t := time.Tick(1 * time.Minute)
-		var c uint64
-		for {
-			select {
-			case <-g.countCh:
-				c++
-			case <-t:
-				llog.Info("count requests in last minute", llog.KV{"count": c})
-				c = 0
-			}
-		}
-	}()
 
 	if g.Init != nil {
 		// make sure the struct's Init is always called first
