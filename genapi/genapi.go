@@ -417,27 +417,6 @@ func (g *GenAPI) hostnameHandler(h http.Handler) http.Handler {
 	})
 }
 
-func (g *GenAPI) rpcListenAddrs() ([]string, []string) {
-	addrs, _ := g.Lever.ParamStrs("--listen-addr")
-	tlsAddrs := []string{}
-	if g.TLSInfo != nil {
-		tlsAddrs, _ = g.Lever.ParamStrs("--tls-listen-addr")
-	}
-
-	// empty might be passed in to disable --listen-addr
-	filterEmpty := func(addrs []string) []string {
-		faddrs := make([]string, 0, len(addrs))
-		for _, addr := range addrs {
-			if addr != "" {
-				faddrs = append(faddrs, addr)
-			}
-		}
-		return faddrs
-	}
-
-	return filterEmpty(addrs), filterEmpty(tlsAddrs)
-}
-
 // RPCListen sets up listeners for the GenAPI listen and starts them up. This
 // may only be called after TestMode or CLIMode has been called, it is
 // automatically done for APIMode.
@@ -461,13 +440,23 @@ func (g *GenAPI) RPCListen() {
 	h = g.contextHandler(h)
 	h = g.hw.handler(h)
 
-	addrs, tlsAddrs := g.rpcListenAddrs()
+	addrs, _ := g.Lever.ParamStrs("--listen-addr")
 	for _, addr := range addrs {
+		// empty addr might get passed in to disable --listen-addr
+		if addr == "" {
+			continue
+		}
 		g.listeners = append(g.listeners, g.serve(h, addr, false))
 	}
 
-	for _, addr := range tlsAddrs {
-		g.listeners = append(g.listeners, g.serve(h, addr, true))
+	if g.TLSInfo != nil {
+		addrs, _ := g.Lever.ParamStrs("--tls-listen-addr")
+		for _, addr := range addrs {
+			if addr == "" {
+				continue
+			}
+			g.listeners = append(g.listeners, g.serve(h, addr, true))
+		}
 	}
 }
 
@@ -686,23 +675,20 @@ func (g *GenAPI) init() {
 		}
 	}
 
-	addrs, tlsAddrs := g.rpcListenAddrs()
-	if len(addrs) > 0 || len(tlsAddrs) > 0 {
-		g.countCh = make(chan bool)
-		go func() {
-			t := time.Tick(1 * time.Minute)
-			var c uint64
-			for {
-				select {
-				case <-g.countCh:
-					c++
-				case <-t:
-					llog.Info("count requests in last minute", llog.KV{"count": c})
-					c = 0
-				}
+	g.countCh = make(chan bool)
+	go func() {
+		t := time.Tick(1 * time.Minute)
+		var c uint64
+		for {
+			select {
+			case <-g.countCh:
+				c++
+			case <-t:
+				llog.Info("count requests in last minute", llog.KV{"count": c})
+				c = 0
 			}
-		}()
-	}
+		}
+	}()
 
 	if g.Init != nil {
 		// make sure the struct's Init is always called first
