@@ -44,7 +44,7 @@ func TestBufferedResponseWriter(t *T) {
 	// Make sure brw caught writes, and the recorder didn't get any of them
 	assert.Equal(t, []byte("foo"), bodyBufB)
 	assert.Equal(t, "foo", brw.Header().Get("X-Foo"))
-	assert.Equal(t, 201, brw.code)
+	assert.Equal(t, 201, brw.Code)
 	assert.NotEqual(t, 201, rw.Code)
 	assert.Equal(t, 0, rw.Body.Len())
 
@@ -89,7 +89,7 @@ func TestBufferedResponseWriterGZip(t *T) {
 	// didn't get any changes
 	assert.Equal(t, []byte("foo"), bodyBufCp.Bytes())
 	assert.Equal(t, "foo", brw.Header().Get("X-Foo"))
-	assert.Equal(t, 201, brw.code)
+	assert.Equal(t, 201, brw.Code)
 	assert.NotEqual(t, 201, rw.Code)
 	assert.Equal(t, 0, rw.Body.Len())
 
