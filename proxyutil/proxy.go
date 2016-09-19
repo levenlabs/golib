@@ -46,6 +46,12 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+// TODO this is somewhat busterino. req is passed in with its URL changed, but
+// implicitly its RemoteAddr is still the original, and is then used to fill in
+// X-Forwarded-For. That's already hacky. In addition if we want to set
+// X-Forwarded-Proto we'd _have_ to have the original URL. So this whole thing
+// needs refactoring
+
 // Do will perform the given request, which should have been taken in from an
 // http.Handler and is now being forwarded on with a new URL set. If the
 // request's context is cancelled then the request will be cancelled.
