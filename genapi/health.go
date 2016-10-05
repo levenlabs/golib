@@ -38,5 +38,7 @@ func (g *GenAPI) healthCheck() http.Handler {
 				return
 			}
 		}
+
+		fmt.Fprintln(w, "THE API SLUMBERS")
 	})
 }
