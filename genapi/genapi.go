@@ -341,6 +341,8 @@ type GenAPI struct {
 	hw *httpWaiter
 
 	countCh chan bool
+
+	httpClient *http.Client
 }
 
 // The different possible Mode values for GenAPI
@@ -624,6 +626,11 @@ func (g *GenAPI) init() {
 	g.doLever()
 
 	g.SRVClient.Preprocess = g.srvClientPreprocess
+
+	g.httpClient = &http.Client{Transport: &http.Transport{
+		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConnsPerHost: 100,
+	}}
 
 	if g.RPCEndpoint == "" {
 		g.RPCEndpoint = "/"
@@ -1050,6 +1057,7 @@ func (g *GenAPI) Call(ctx context.Context, res interface{}, host, method string,
 	opts := rpcutil.JSONRPC2Opts{
 		BaseRequest: r,
 		Context:     ctx,
+		Client:      g.httpClient,
 	}
 
 	if err := rpcutil.JSONRPC2CallOpts(opts, host, res, method, args); err != nil {

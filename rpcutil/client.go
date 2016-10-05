@@ -35,6 +35,9 @@ type JSONRPC2Opts struct {
 	// If set, this will be used as the context for http request being made.
 	// The call will respect the cancellation of the context
 	Context context.Context
+
+	// The http client to use. http.DefaultClient will be used if not set
+	Client *http.Client
 }
 
 // JSONRPC2RequestOpts is like JSONRPC2Request but it takes in a JSONRPC2Opts
@@ -84,7 +87,11 @@ func JSONRPC2CallOpts(opts JSONRPC2Opts, url string, res interface{}, method str
 		opts.Context = context.Background()
 	}
 
-	resp, err := ctxhttp.Do(opts.Context, http.DefaultClient, r)
+	if opts.Client == nil {
+		opts.Client = http.DefaultClient
+	}
+
+	resp, err := ctxhttp.Do(opts.Context, opts.Client, r)
 	if err != nil {
 		return err
 	}
