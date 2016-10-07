@@ -68,6 +68,8 @@ func (rp ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
 	outreq.ProtoMajor = 1
 	outreq.ProtoMinor = 1
 	outreq.Close = false
+	// we cannot make a request with a RequestURI
+	outreq.RequestURI = ""
 
 	// Remove hop-by-hop headers to the backend. Especially
 	// important is "Connection" because we want a persistent
@@ -87,6 +89,8 @@ func (rp ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
 	}
 
 	AddXForwardedFor(outreq, req)
+	// now clear the RemoteAddr
+	outreq.RemoteAddr = ""
 
 	res, err := cl.Do(outreq)
 	if err != nil {
