@@ -352,6 +352,25 @@ const (
 	CLIMode  = "cli"
 )
 
+// HTTPDefaultClient returns a *http.Client with sane defaults that can be
+// overridden on a case-by-case basis if you can't use http.DefaultClient
+func HTTPDefaultClient() *http.Client {
+	// based on defaults in 1.7
+	return &http.Client{Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConnsPerHost: 100,
+		// even though this is high, we should keep some number that isn't
+		// infinity (default)
+		MaxIdleConns:          1000,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}}
+}
+
 // APIMode puts the GenAPI into APIMode, wherein it listens for any incoming rpc
 // requests and tries to serve them against one of its Services. This method
 // will block indefinitely
@@ -626,11 +645,7 @@ func (g *GenAPI) init() {
 	g.doLever()
 
 	g.SRVClient.Preprocess = g.srvClientPreprocess
-
-	g.httpClient = &http.Client{Transport: &http.Transport{
-		IdleConnTimeout:     90 * time.Second,
-		MaxIdleConnsPerHost: 100,
-	}}
+	g.httpClient = HTTPDefaultClient()
 
 	if g.RPCEndpoint == "" {
 		g.RPCEndpoint = "/"
