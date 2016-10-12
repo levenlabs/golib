@@ -463,6 +463,7 @@ func (g *GenAPI) RPCListen() {
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
 	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
+	g.Mux.HandleFunc("/debug/loglevel", logLevelHandler)
 	g.Mux.Handle("/health-check", g.healthCheck())
 
 	g.hw = &httpWaiter{
@@ -636,6 +637,19 @@ func (g *GenAPI) pprofHandler() http.Handler {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// GET /loglevel?level=<newlevel>
+func logLevelHandler(w http.ResponseWriter, r *http.Request) {
+	if l := r.FormValue("level"); l != "" {
+		if err := llog.SetLevelFromString(l); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		fmt.Fprintf(w, "New log level is %s\n", llog.GetLevel())
+		return
+	}
+
+	fmt.Fprintf(w, "Current log level is %s\n", llog.GetLevel())
 }
 
 func (g *GenAPI) init() {
