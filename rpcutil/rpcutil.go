@@ -158,6 +158,11 @@ func (cr llCodecRequest) ReadRequest(args interface{}) error {
 		fn = llog.Debug
 	} else {
 		fn = llog.Info
+		if argsKVer, ok := args.(interface {
+			KV() llog.KV
+		}); ok {
+			cr.kv = llog.Merge(cr.kv, argsKVer.KV())
+		}
 	}
 
 	if cr.c.RunInputApplicators {
