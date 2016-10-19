@@ -15,8 +15,8 @@ func TestProxyProto(t *T) {
 	l, err := net.Listen("tcp", ":0") // any port
 	require.Nil(t, err)
 
-	pl, err := newProxyListener(l, []string{"127.0.0.1/32"})
-	require.Nil(t, err)
+	_, localCIDR, _ := net.ParseCIDR("127.0.0.1/32")
+	pl := newProxyListener(l, cidrSet{localCIDR})
 
 	_, portStr, err := net.SplitHostPort(pl.Addr().String())
 	require.Nil(t, err)

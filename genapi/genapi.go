@@ -343,6 +343,32 @@ type GenAPI struct {
 	countCh chan bool
 
 	httpClient *http.Client
+
+	// generated during init based on --private-cidrs
+	privateCIDRs cidrSet
+}
+
+type cidrSet []*net.IPNet
+
+// returns nil if the cidrSet contains the address, or an error if it doesn't or
+// the address is otherwise invalid.
+func (c cidrSet) hasAddr(addr string) error {
+	ipStr, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid addr %q: %s", addr, err)
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return fmt.Errorf("invalid ip %q", ipStr)
+	}
+
+	for _, cidr := range c {
+		if cidr.Contains(ip) {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid ip %q", ipStr)
 }
 
 // The different possible Mode values for GenAPI
@@ -420,6 +446,16 @@ func (g *GenAPI) APIMode() {
 
 }
 
+func (g *GenAPI) privateOnlyHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := g.privateCIDRs.hasAddr(r.RemoteAddr); err != nil {
+			http.Error(w, "", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func (g *GenAPI) countHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.countCh <- true
@@ -458,12 +494,12 @@ func (g *GenAPI) RPCListen() {
 	}()
 
 	if g.RPCEndpoint != "_" {
-		g.Mux.Handle(g.RPCEndpoint, g.RPC())
+		g.Mux.Handle(g.RPCEndpoint, g.privateOnlyHandler(g.RPC()))
 	}
 	// The net/http/pprof package expects to be under /debug/pprof/, which is
 	// why we don't strip the prefix here
-	g.Mux.Handle("/debug/pprof/", g.pprofHandler())
-	g.Mux.HandleFunc("/debug/loglevel", logLevelHandler)
+	g.Mux.Handle("/debug/pprof/", g.privateOnlyHandler(g.pprofHandler()))
+	g.Mux.Handle("/debug/loglevel", g.privateOnlyHandler(logLevelHandler))
 	g.Mux.Handle("/health-check", g.healthCheck())
 
 	g.hw = &httpWaiter{
@@ -540,14 +576,7 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 
 func (g *GenAPI) listenerMaker(doTLS bool) func(net.Listener) (net.Listener, error) {
 	return func(l net.Listener) (net.Listener, error) {
-		var err error
-
-		allowedProxyCIDRsStr, _ := g.ParamStr("--proxy-proto-allowed-cidrs")
-		allowedProxyCIDRs := strings.Split(allowedProxyCIDRsStr, ",")
-		if l, err = newProxyListener(l, allowedProxyCIDRs); err != nil {
-			return nil, fmt.Errorf("proxy proto listener: %s", err)
-		}
-
+		l = newProxyListener(l, g.privateCIDRs)
 		if doTLS {
 			tf := &tls.Config{
 				Certificates: g.TLSInfo.Certs,
@@ -555,7 +584,6 @@ func (g *GenAPI) listenerMaker(doTLS bool) func(net.Listener) (net.Listener, err
 			tf.BuildNameToCertificate()
 			l = tls.NewListener(l, tf)
 		}
-
 		return l, nil
 	}
 }
@@ -607,6 +635,7 @@ func (g *GenAPI) RPC() http.Handler {
 			})
 		}
 	}
+
 	return s
 }
 
@@ -627,20 +656,11 @@ func (g *GenAPI) pprofHandler() http.Handler {
 	h.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	h.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
 	h.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ipStr, _, _ := net.SplitHostPort(r.RemoteAddr)
-		ip := net.ParseIP(ipStr)
-		if ip == nil || !ip.IsLoopback() {
-			http.Error(w, "", 403) // forbidden
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
+	return h
 }
 
 // GET /loglevel?level=<newlevel>
-func logLevelHandler(w http.ResponseWriter, r *http.Request) {
+var logLevelHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	if l := r.FormValue("level"); l != "" {
 		if err := llog.SetLevelFromString(l); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -650,7 +670,7 @@ func logLevelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "Current log level is %s\n", llog.GetLevel())
-}
+})
 
 func (g *GenAPI) init() {
 	g.ctxs = map[*http.Request]context.Context{}
@@ -660,6 +680,22 @@ func (g *GenAPI) init() {
 
 	g.SRVClient.Preprocess = g.srvClientPreprocess
 	g.httpClient = HTTPDefaultClient()
+
+	// generate privateCIDRS
+	{
+		privateCIDRsStr, _ := g.ParamStr("--private-cidrs")
+		privateCIDRs := strings.Split(privateCIDRsStr, ",")
+		for _, cidr := range privateCIDRs {
+			if cidr == "" {
+				continue
+			}
+			_, parsed, err := net.ParseCIDR(cidr)
+			if err != nil {
+				llog.Fatal("could not parse private cidr", llog.KV{"cidr": cidr}, llog.ErrKV(err))
+			}
+			g.privateCIDRs = append(g.privateCIDRs, parsed)
+		}
+	}
 
 	if g.RPCEndpoint == "" {
 		g.RPCEndpoint = "/"
@@ -795,8 +831,8 @@ func (g *GenAPI) doLever() {
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",
 		})
 		g.Lever.Add(lever.Param{
-			Name:        "--proxy-proto-allowed-cidrs",
-			Description: "Comma separated list of cidrs which are allowed to use the PROXY protocol",
+			Name:        "--private-cidrs",
+			Description: "Comma separated list of cidrs which are considered to be our private network",
 			Default:     "127.0.0.1/32,::1/128,10.0.0.0/8",
 		})
 		g.Lever.Add(lever.Param{
