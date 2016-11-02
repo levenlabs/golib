@@ -214,6 +214,13 @@ type TLSInfo struct {
 	// One or more certificates to use for TLS. Will be filled automatically if
 	// FillCertsManually is false
 	Certs []tls.Certificate
+
+	// SessionTicketKey is used by TLS servers to provide session
+	// resumption. If multiple servers are terminating connections for the same
+	// host they should all have the same SessionTicketKey. If the
+	// SessionTicketKey leaks, previously recorded and future TLS connections
+	// using that key are compromised.
+	SessionTicketKey [32]byte
 }
 
 // GenAPI is a type used to handle most of the generic logic we always implement
@@ -557,8 +564,18 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 		g.ListenAddr = actualAddr
 	}
 
+	var tc *tls.Config
+	if doTLS {
+		// when srv.Serve is called, it checks to see if NextProtos contains
+		// "h2" and if so, it sets up *tls.Config to be http2-ready
+		tc = &tls.Config{
+			NextProtos:       []string{"h2", "http/1.1"},
+			SessionTicketKey: g.TLSInfo.SessionTicketKey,
+		}
+	}
+
 	netln := net.Listener(tcpKeepAliveListener{ln.(*net.TCPListener)})
-	lr, err := newListenerReloader(netln, g.listenerMaker(doTLS))
+	lr, err := newListenerReloader(netln, g.listenerMaker(tc))
 	if err != nil {
 		llog.Fatal("failed to create listener", kv.Set("err", err))
 	}
@@ -566,7 +583,8 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 	go func() {
 		llog.Info("starting rpc listening", kv)
 		srv := &http.Server{
-			Handler: h,
+			Handler:   h,
+			TLSConfig: tc,
 		}
 		srv.Serve(lr)
 	}()
@@ -574,15 +592,22 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 	return lr
 }
 
-func (g *GenAPI) listenerMaker(doTLS bool) func(net.Listener) (net.Listener, error) {
+func (g *GenAPI) listenerMaker(tc *tls.Config) func(net.Listener) (net.Listener, error) {
 	return func(l net.Listener) (net.Listener, error) {
 		l = newProxyListener(l, g.privateCIDRs)
-		if doTLS {
-			tf := &tls.Config{
+		if tc != nil {
+			// BuildNameToCertificate creates the map and THEN loops over
+			// and adds to the map, this creates a race condition, so we use
+			// a copy and add it back to the pointer after
+			tcc := &tls.Config{
 				Certificates: g.TLSInfo.Certs,
 			}
-			tf.BuildNameToCertificate()
-			l = tls.NewListener(l, tf)
+			tcc.BuildNameToCertificate()
+			tc.Certificates = tcc.Certificates
+			tc.NameToCertificate = tcc.NameToCertificate
+			// use the same value for tc across listeners so we can keep session
+			// tickets ther same
+			l = tls.NewListener(l, tc)
 		}
 		return l, nil
 	}
@@ -761,6 +786,16 @@ func (g *GenAPI) init() {
 			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
 		}
 	}
+	if g.TLSInfo != nil {
+		key, _ := g.ParamStr("--tls-session-key")
+		if key != "" {
+			kb := []byte(key)
+			if len(kb) != 32 {
+				llog.Fatal("--tls-session-key must be 32 bytes", llog.KV{"len": len(kb)})
+			}
+			copy(g.TLSInfo.SessionTicketKey[:], kb)
+		}
+	}
 
 	if g.Init != nil {
 		// make sure the struct's Init is always called first
@@ -812,6 +847,11 @@ func (g *GenAPI) doLever() {
 			Name:         "--tls-listen-addr",
 			Description:  "[address]:port to listen for https requests on. If port is zero a port will be chosen randomly",
 			DefaultMulti: []string{},
+		})
+		g.Lever.Add(lever.Param{
+			Name:        "--tls-session-key",
+			Description: "If multiple servers are terminating connections for the same host they should all have the same key",
+			Default:     "",
 		})
 		if !g.TLSInfo.FillCertsManually {
 			g.Lever.Add(lever.Param{
