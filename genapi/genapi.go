@@ -1241,3 +1241,26 @@ func (cs CallerStub) Call(_ context.Context, res interface{}, method string, arg
 	vres.Set(reflect.ValueOf(csres))
 	return nil
 }
+
+type retryCaller struct {
+	Caller
+	attempts int
+}
+
+// RetryCaller returns a Caller which wraps the given one, passing all Calls
+// back to it. If any return any errors they will be retried the given number of
+// times until one doesn't return an error. The most recent error is returned if
+// all attempts fail.
+func RetryCaller(c Caller, attempts int) Caller {
+	return retryCaller{c, attempts}
+}
+
+func (rc retryCaller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
+	var err error
+	for i := 0; i < rc.attempts; i++ {
+		if err = rc.Caller.Call(ctx, res, method, args); err == nil {
+			return nil
+		}
+	}
+	return err
+}
