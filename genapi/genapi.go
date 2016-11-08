@@ -842,6 +842,11 @@ func (g *GenAPI) doLever() {
 		Description:  "[address]:port to listen for requests on. If port is zero a port will be chosen randomly",
 		DefaultMulti: []string{":0"},
 	})
+	g.Lever.Add(lever.Param{
+		Name:        "--private-cidrs",
+		Description: "Comma separated list of cidrs which are considered to be our private network",
+		Default:     "127.0.0.1/32,::1/128,10.0.0.0/8",
+	})
 	if g.TLSInfo != nil {
 		g.Lever.Add(lever.Param{
 			Name:         "--tls-listen-addr",
@@ -869,11 +874,6 @@ func (g *GenAPI) doLever() {
 		g.Lever.Add(lever.Param{
 			Name:        "--skyapi-addr",
 			Description: "Hostname of skyapi, to be looked up via a SRV request. Unset means don't register with skyapi",
-		})
-		g.Lever.Add(lever.Param{
-			Name:        "--private-cidrs",
-			Description: "Comma separated list of cidrs which are considered to be our private network",
-			Default:     "127.0.0.1/32,::1/128,10.0.0.0/8",
 		})
 		g.Lever.Add(lever.Param{
 			Name:        "--unhealthy-timeout",
@@ -1240,4 +1240,27 @@ func (cs CallerStub) Call(_ context.Context, res interface{}, method string, arg
 	vres := reflect.ValueOf(res).Elem()
 	vres.Set(reflect.ValueOf(csres))
 	return nil
+}
+
+type retryCaller struct {
+	Caller
+	attempts int
+}
+
+// RetryCaller returns a Caller which wraps the given one, passing all Calls
+// back to it. If any return any errors they will be retried the given number of
+// times until one doesn't return an error. The most recent error is returned if
+// all attempts fail.
+func RetryCaller(c Caller, attempts int) Caller {
+	return retryCaller{c, attempts}
+}
+
+func (rc retryCaller) Call(ctx context.Context, res interface{}, method string, args interface{}) error {
+	var err error
+	for i := 0; i < rc.attempts; i++ {
+		if err = rc.Caller.Call(ctx, res, method, args); err == nil {
+			return nil
+		}
+	}
+	return err
 }
