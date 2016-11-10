@@ -259,7 +259,7 @@ func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error
 				Message: "internal server error",
 			}
 		}
-		llog.Error("jsonrpc internal server error", cr.kv)
+		llog.Warn("jsonrpc internal server error", cr.kv)
 	} else if quietErr == nil {
 		llog.Warn("jsonrpc client error", cr.kv)
 	}
