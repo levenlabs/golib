@@ -74,6 +74,7 @@
 package genapi
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"crypto/tls"
 	"fmt"
@@ -84,7 +85,6 @@ import (
 	"os/signal"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -108,17 +108,32 @@ import (
 	"gopkg.in/mgo.v2"
 )
 
-// Version can be set using:
-//	-ldflags "-X github.com/levenlabs/golib/genapi.Version versionstring"
-// on the go build command. When this is done, the --version flag will be
-// available on the command-line and will print out whatever version string is
-// passed in.
-//
-// It could also be set manually during runtime, but that would kind of defeat
-// the purpose.
-//
-// Version will be automatically unquoted
-var Version string
+// Build variables which can be set during the go build command. E.g.:
+// -ldflags "-X 'github.com/levenlabs/golib/genapi.BuildCommit commitHash'"
+// These fields will be used to construct the string printed out when the
+// --version flag is used.
+var (
+	BuildCommit    string
+	BuildDate      string
+	BuildGoVersion string
+)
+
+// Version compiles the build strings into a string which will be printed out
+// when --version is used in a GenAPI instance, but is exposed so it may be used
+// other places too.
+func Version() string {
+	orStr := func(s, alt string) string {
+		if s == "" {
+			return alt
+		}
+		return s
+	}
+	b := new(bytes.Buffer)
+	fmt.Fprintf(b, "BuildCommit: %s\n", orStr(BuildCommit, "<unset>"))
+	fmt.Fprintf(b, "BuildDate: %s\n", orStr(BuildDate, "<unset>"))
+	fmt.Fprintf(b, "BuildGoVersion: %s\n", orStr(BuildGoVersion, "<unset>"))
+	return b.String()
+}
 
 // MongoInfo contains information needed by the api to interact with a mongo
 // backend, and also houses the connection to that backend (which can be
@@ -731,15 +746,8 @@ func (g *GenAPI) init() {
 	}
 
 	if g.Lever.ParamFlag("--version") {
-		v := Version
-		if v[0] != '"' {
-			v = `"` + v + `"`
-		}
-		if uv, err := strconv.Unquote(v); err == nil {
-			v = uv
-		}
-		fmt.Println(v)
-		time.Sleep(100 * time.Millisecond)
+		fmt.Print(Version())
+		os.Stdout.Sync()
 		os.Exit(0)
 	}
 
@@ -915,14 +923,12 @@ func (g *GenAPI) doLever() {
 		})
 	}
 
-	if Version != "" {
-		g.Lever.Add(lever.Param{
-			Name:        "--version",
-			Aliases:     []string{"-V"},
-			Description: "Print out version information for this binary",
-			Flag:        true,
-		})
-	}
+	g.Lever.Add(lever.Param{
+		Name:        "--version",
+		Aliases:     []string{"-V"},
+		Description: "Print out version information for this binary",
+		Flag:        true,
+	})
 
 	for rapi, raddr := range g.RemoteAPIs {
 		g.Lever.Add(lever.Param{
