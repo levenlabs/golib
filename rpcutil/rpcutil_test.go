@@ -90,22 +90,22 @@ func TestLLCodec(t *T) {
 	assertLog("WARN", "Foo can't be -1")
 
 	// Test that a server defined error makes it back to the user. This should
-	// produce an ERROR
+	// produce a WARN
 	args = TestArgs{-2, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: -1, Message: "Server doesn't know what -2 is",
 	}, err)
-	assertLog("ERROR", "jsonrpc internal server error")
+	assertLog("WARN", "jsonrpc internal server error")
 
 	// Test that an unknown error makes it back to the user. This should produce
-	// an ERROR
+	// a WARN
 	args = TestArgs{-3, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "unexpected internal server error: server can't even what",
 	}, err)
-	assertLog("ERROR", "jsonrpc internal server error")
+	assertLog("WARN", "jsonrpc internal server error")
 
 	// Now we disable showing internal server messages and repeat the last three
 	// tests. The first should still return its error, the second two should
@@ -124,14 +124,14 @@ func TestLLCodec(t *T) {
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
-	assertLog("ERROR", "jsonrpc internal server error")
+	assertLog("WARN", "jsonrpc internal server error")
 
 	args = TestArgs{-3, ""}
 	err = JSONRPC2CallHandler(h, &res, "TestRPC.DoFoo", &args)
 	assert.Equal(t, &json2.Error{
 		Code: json2.E_SERVER, Message: "internal server error",
 	}, err)
-	assertLog("ERROR", "jsonrpc internal server error")
+	assertLog("WARN", "jsonrpc internal server error")
 
 	// Test validation, which ensures that Foo is >= 0
 	c = NewLLCodec()
