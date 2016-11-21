@@ -7,7 +7,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-var unixZero = time.Unix(0, 0)
+var unixZero = time.Unix(0, 0).UTC()
 
 func timeToFloat(t time.Time) float64 {
 	// If time.Time is the empty value, UnixNano will return the farthest back
@@ -83,7 +83,7 @@ func TimestampNow() Timestamp {
 // TimestampFromInt64 returns a Timestamp equal to the given int64, assuming it
 // too is a unix timestamp
 func TimestampFromInt64(ts int64) Timestamp {
-	return Timestamp{time.Unix(ts, 0)}
+	return Timestamp{time.Unix(ts, 0).UTC()}
 }
 
 // TimestampFromFloat64 returns a Timestamp equal to the given float64, assuming
@@ -93,7 +93,7 @@ func TimestampFromInt64(ts int64) Timestamp {
 func TimestampFromFloat64(ts float64) Timestamp {
 	secs := int64(ts)
 	nsecs := int64((ts - float64(secs)) * 1e9)
-	return Timestamp{time.Unix(secs, nsecs)}
+	return Timestamp{time.Unix(secs, nsecs).UTC()}
 }
 
 // TimestampFromString attempts to parse the string as a float64, and then
