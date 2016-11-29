@@ -1062,7 +1062,7 @@ func (g *GenAPI) initOkq() {
 	llog.Info("connecting to okq", kv)
 	p, err := pool.NewCustom("tcp", okqAddr, okqPoolSize, df)
 	if err != nil {
-		llog.Fatal("error connection to okq", kv, llog.KV{"err": err})
+		llog.Fatal("error connecting to okq", kv, llog.KV{"err": err})
 	}
 
 	g.OkqInfo.Client = okq.NewWithOpts(okq.Opts{
