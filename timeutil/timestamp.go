@@ -60,7 +60,11 @@ func (t Timestamp) GetBSON() (interface{}, error) {
 
 // SetBSON implements the bson.Setter interface
 func (t *Timestamp) SetBSON(raw bson.Raw) error {
-	return raw.Unmarshal(&t.Time)
+	if err := raw.Unmarshal(&t.Time); err != nil {
+		return err
+	}
+	t.Time = t.Time.UTC()
+	return nil
 }
 
 // Float64 returns the float representation of the timestamp in seconds.
