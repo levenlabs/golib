@@ -7,7 +7,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-var unixZero = time.Unix(0, 0).UTC()
+var unixZero = time.Unix(0, 0)
 
 func timeToFloat(t time.Time) float64 {
 	// If time.Time is the empty value, UnixNano will return the farthest back
@@ -60,11 +60,7 @@ func (t Timestamp) GetBSON() (interface{}, error) {
 
 // SetBSON implements the bson.Setter interface
 func (t *Timestamp) SetBSON(raw bson.Raw) error {
-	if err := raw.Unmarshal(&t.Time); err != nil {
-		return err
-	}
-	t.Time = t.Time.UTC()
-	return nil
+	return raw.Unmarshal(&t.Time)
 }
 
 // Float64 returns the float representation of the timestamp in seconds.
@@ -87,7 +83,7 @@ func TimestampNow() Timestamp {
 // TimestampFromInt64 returns a Timestamp equal to the given int64, assuming it
 // too is a unix timestamp
 func TimestampFromInt64(ts int64) Timestamp {
-	return Timestamp{time.Unix(ts, 0).UTC()}
+	return Timestamp{time.Unix(ts, 0)}
 }
 
 // TimestampFromFloat64 returns a Timestamp equal to the given float64, assuming
@@ -97,7 +93,7 @@ func TimestampFromInt64(ts int64) Timestamp {
 func TimestampFromFloat64(ts float64) Timestamp {
 	secs := int64(ts)
 	nsecs := int64((ts - float64(secs)) * 1e9)
-	return Timestamp{time.Unix(secs, nsecs).UTC()}
+	return Timestamp{time.Unix(secs, nsecs)}
 }
 
 // TimestampFromString attempts to parse the string as a float64, and then
