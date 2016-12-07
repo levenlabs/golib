@@ -90,7 +90,7 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/net/context"
+	"context"
 
 	"github.com/gorilla/rpc/v2"
 	"github.com/levenlabs/gatewayrpc"
