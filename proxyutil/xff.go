@@ -71,15 +71,27 @@ func RequestIP(r *http.Request) string {
 	return reqIP
 }
 
+func addXForwardedForHelper(dst *http.Request, existing []string, ip string) {
+	var xff string
+	if len(existing) > 0 {
+		xff = strings.Join(existing, ", ") + ", " + ip
+	} else {
+		xff = ip
+	}
+	dst.Header.Set("X-Forwarded-For", xff)
+}
+
 // AddXForwardedFor populates the X-Forwarded-For header on dst to convey that
 // src is being proxied by this server. dst and src may be the same pointer.
 func AddXForwardedFor(dst, src *http.Request) {
 	rIP, _, _ := net.SplitHostPort(src.RemoteAddr)
-	var xff string
-	if xffs, ok := src.Header["X-Forwarded-For"]; ok {
-		xff = strings.Join(xffs, ", ") + ", " + rIP
-	} else {
-		xff = rIP
-	}
-	dst.Header.Set("X-Forwarded-For", xff)
+	xff, _ := src.Header["X-Forwarded-For"]
+	addXForwardedForHelper(dst, xff, rIP)
+}
+
+// AddXForwardedForIP populates the X-Forwarded-For header on dst to convey that
+// ip is making the request.
+func AddXForwardedForIP(dst *http.Request, ip string) {
+	xff, _ := dst.Header["X-Forwarded-For"]
+	addXForwardedForHelper(dst, xff, ip)
 }
