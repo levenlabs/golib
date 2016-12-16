@@ -223,6 +223,20 @@ func (cr llCodecRequest) WriteResponse(w http.ResponseWriter, r interface{}) {
 	cr.CodecRequest.WriteResponse(w, r)
 }
 
+// IsInternalErr returns whether or not this error is due to an internal server
+// error (vs bad request data on the client's part). Returns false if nil,
+// returns true if a non *json2.Error is passed in.
+func IsInternalErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	jerr, ok := err.(*json2.Error)
+	if !ok {
+		return true
+	}
+	return jerr.Code < 0 && jerr.Code >= json2.E_SERVER
+}
+
 func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error) {
 	// status is ignored by gorilla
 
@@ -252,7 +266,7 @@ func (cr llCodecRequest) WriteError(w http.ResponseWriter, status int, err error
 	// E_SERVER, all the others which are less than it are basically client
 	// errors. So all within this range are considered internal server errors,
 	// and need to be possibly hidden and definitely output as errors
-	if jsonErr.Code < 0 && jsonErr.Code >= json2.E_SERVER {
+	if IsInternalErr(jsonErr) {
 		if cr.c.HideServerErrors {
 			jsonErr = &json2.Error{
 				Code:    json2.E_SERVER,
