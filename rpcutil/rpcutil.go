@@ -68,7 +68,10 @@ func (j jsonInliner) MarshalJSON() ([]byte, error) {
 	}
 
 	bOrig = bOrig[:len(bOrig)-1]
-	bOrig = append(bOrig, ',')
+	// if bOrig was {} then we don't have any reason to put a comma
+	if bOrig[len(bOrig)-1] != '{' {
+		bOrig = append(bOrig, ',')
+	}
 	bOrig = append(bOrig, bExtra[1:]...)
 	return bOrig, nil
 }

@@ -45,6 +45,10 @@ func (rr TestRPC) DoFoo(r *http.Request, args *TestArgs, res *TestRes) error {
 	return nil
 }
 
+func (rr TestRPC) DoBar(r *http.Request, _ *struct{}, _ *struct{}) error {
+	return nil
+}
+
 func TestLLCodec(t *T) {
 	llog.SetLevelFromString("WARN")
 	oldOut := llog.Out
@@ -183,6 +187,11 @@ func TestLLCodec(t *T) {
 	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoFoo", &args))
 	assert.Equal(t, 3, len(resm))
 	assert.Equal(t, float64(i), resm["Bar"])
+	assert.Equal(t, "turtles", resm["Extra"])
+
+	resm = map[string]interface{}{}
+	require.Nil(t, JSONRPC2CallHandler(h, &resm, "TestRPC.DoBar", nil))
+	assert.Equal(t, 1, len(resm))
 	assert.Equal(t, "turtles", resm["Extra"])
 
 	// Test QuietErrors
