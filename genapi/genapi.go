@@ -345,7 +345,7 @@ type GenAPI struct {
 	// SRVClient which will be used by GenAPI when resolving requests, and which
 	// can also be used by other processes as well. This should only be modified
 	// during the init function
-	srvclient.SRVClient
+	*srvclient.SRVClient
 
 	ctxs  map[*http.Request]context.Context
 	ctxsL sync.RWMutex
@@ -715,6 +715,7 @@ var logLevelHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 func (g *GenAPI) init() {
 	g.ctxs = map[*http.Request]context.Context{}
 	rpcutil.InstallCustomValidators()
+	g.SRVClient = new(srvclient.SRVClient)
 	g.SRVClient.EnableCacheLast()
 	g.doLever()
 

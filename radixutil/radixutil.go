@@ -17,7 +17,7 @@ import (
 // connection. The given timeout will be used as the read/write timeout on the
 // new connection. A timeout of 0 can be passed in to use whatever the default
 // is on the system
-func SRVDialFunc(sc srvclient.SRVClient, timeout time.Duration) func(string, string) (*redis.Client, error) {
+func SRVDialFunc(sc *srvclient.SRVClient, timeout time.Duration) func(string, string) (*redis.Client, error) {
 	return func(network, addr string) (*redis.Client, error) {
 		addr = sc.MaybeSRV(addr)
 		return redis.DialTimeout(network, addr, timeout)
