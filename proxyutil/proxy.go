@@ -144,6 +144,27 @@ func FilterEncodings(r *http.Request, encodings ...string) {
 func WriteResponse(dst http.ResponseWriter, src *http.Response) {
 	copyHeader(dst.Header(), src.Header)
 
+	// combine and de-dup side-by-side hosts
+	mh := map[string][]string(dst.Header())
+	if hs := mh["X-Hostname"]; len(hs) > 1 {
+		var all []string
+		for _, v := range hs {
+			all = append(all, strings.Split(v, ",")...)
+		}
+		var val string
+		for i, v := range all {
+			if i == 0 {
+				val = v
+				continue
+			}
+			if all[i-1] == all[i] {
+				continue
+			}
+			val += "," + v
+		}
+		dst.Header().Set("X-Hostname", val)
+	}
+
 	// The "Trailer" header isn't included in the Transport's response,
 	// at least for *http.Transport. Build it up from Trailer.
 	if len(src.Trailer) > 0 {
