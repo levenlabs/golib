@@ -974,6 +974,15 @@ func (g *GenAPI) getDCHash() string {
 	return fmt.Sprintf("%x", sha1Bytes)[:20]
 }
 
+// hashResolver implements the Resolver interface
+type hashResolver struct {
+	srv *srvclient.SRVClient
+}
+
+func (r *hashResolver) Resolve(h string) (string, error) {
+	return r.srv.SRV(h)
+}
+
 func (g *GenAPI) doSkyAPI() chan struct{} {
 	skyapiAddr, _ := g.Lever.ParamStr("--skyapi-addr")
 	if skyapiAddr == "" {
@@ -998,6 +1007,7 @@ func (g *GenAPI) doSkyAPI() chan struct{} {
 				ReconnectAttempts: 0, // do not attempt to reconnect, we'll do that here
 				StopCh:            stopCh,
 				Prefix:            dc,
+				Resolver:          &hashResolver{g.SRVClient},
 			})
 			if err != nil {
 				llog.Warn("skyapi error", kv.Set("err", err))
