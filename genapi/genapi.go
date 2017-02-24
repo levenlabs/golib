@@ -359,8 +359,8 @@ type GenAPI struct {
 	// set of active listeners for this genapi (APIMode only)
 	listeners []*listenerReloader
 
-	// the active httpWaiter for the instance
-	hw *httpWaiter
+	// the active http.Server for the instance
+	srvs []*http.Server
 
 	countCh chan bool
 
@@ -452,15 +452,26 @@ func (g *GenAPI) APIMode() {
 	if skyapiStopCh != nil {
 		llog.Info("stopping skyapi connection")
 		close(skyapiStopCh)
-		// Wait a bit just in case something gets the skydns record before we
-		// kill the skyapi connection, but the connection doesn't come in till
-		// after hw.wait() runs
-		time.Sleep(500 * time.Millisecond)
 	}
-	// Appear as unhealthy for a while before hw.wait() runs
+	// Appear as unhealthy for a while before Shutdown
+	// This makes sure that we're accepting connections while LB's might have
+	// us still in their pool
+	// Also in case something gets the skydns record before we
+	// killed the skyapi connection, but the connection doesn't come in till
+	// after Shutdown runs
 	time.Sleep(time.Duration(unhealthyTimeout) * time.Millisecond)
-	g.hw.wait() // hw is populated in RPCListen
-	time.Sleep(50 * time.Millisecond)
+	// Wait at most a minute for shutdown to complete
+	ctx, cancelFn := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelFn()
+	wg := sync.WaitGroup{}
+	for i := range g.srvs {
+		wg.Add(1)
+		go func(srv *http.Server) {
+			srv.Shutdown(ctx)
+			wg.Done()
+		}(g.srvs[i])
+	}
+	wg.Wait()
 
 	if g.DoneCh != nil {
 		close(g.DoneCh)
@@ -524,16 +535,11 @@ func (g *GenAPI) RPCListen() {
 	g.Mux.Handle("/debug/loglevel", g.privateOnlyHandler(logLevelHandler))
 	g.Mux.Handle("/health-check", g.healthCheck())
 
-	g.hw = &httpWaiter{
-		ch: make(chan struct{}, 1),
-	}
-
 	var h http.Handler
 	h = g.Mux
 	h = g.countHandler(h)
 	h = g.hostnameHandler(h)
 	h = g.contextHandler(h)
-	h = g.hw.handler(h)
 
 	addrs, _ := g.Lever.ParamStrs("--listen-addr")
 	for _, addr := range addrs {
@@ -595,12 +601,14 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 		llog.Fatal("failed to create listener", kv.Set("err", err))
 	}
 
+	// set this outside the goroutine so we don't have races with Close
+	srv := &http.Server{
+		Handler:   h,
+		TLSConfig: tc,
+	}
+	g.srvs = append(g.srvs, srv)
 	go func() {
 		llog.Info("starting rpc listening", kv)
-		srv := &http.Server{
-			Handler:   h,
-			TLSConfig: tc,
-		}
 		srv.Serve(lr)
 	}()
 
@@ -887,6 +895,7 @@ func (g *GenAPI) doLever() {
 		g.Lever.Add(lever.Param{
 			Name:        "--unhealthy-timeout",
 			Description: "Number of milliseconds to appear unhealthy after a stop signal is received",
+			Default:     "1",
 		})
 	}
 

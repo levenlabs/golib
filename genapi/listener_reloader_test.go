@@ -71,3 +71,28 @@ func TestListenerReloader(t *T) {
 	assertReadLine("bar\n", c)
 	c.Close()
 }
+
+func TestListenerReloaderClose(t *T) {
+	l, err := net.Listen("tcp", ":0") // any port
+	require.Nil(t, err)
+
+	maker := func(ll net.Listener) (net.Listener, error) {
+		return prefixerListener{ll, "foo\n"}, nil
+	}
+	lr, err := newListenerReloader(l, maker)
+	require.Nil(t, err)
+
+	ch := make(chan error)
+	// we do 2 at once to test for races
+	go func() {
+		ch <- lr.Close()
+	}()
+	go func() {
+		ch <- lr.Close()
+	}()
+
+	// the non-error should always happen first since it'll cause the second
+	// close to immediately fail
+	assert.Nil(t, <-ch)
+	assert.NotNil(t, <-ch)
+}

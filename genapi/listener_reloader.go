@@ -1,6 +1,9 @@
 package genapi
 
-import "net"
+import (
+	"errors"
+	"net"
+)
 
 // listenerReloader is a net.Listener whose underlying configuration can be
 // swapped in and out at any time.
@@ -14,7 +17,7 @@ type listenerReloader struct {
 	maker   func(net.Listener) (net.Listener, error)
 	lch     chan net.Listener
 	newCh   chan net.Listener
-	closeCh chan struct{}
+	closeCh chan net.Listener
 }
 
 func newListenerReloader(inner net.Listener, maker func(net.Listener) (net.Listener, error)) (*listenerReloader, error) {
@@ -23,7 +26,7 @@ func newListenerReloader(inner net.Listener, maker func(net.Listener) (net.Liste
 		maker:   maker,
 		lch:     make(chan net.Listener),
 		newCh:   make(chan net.Listener),
-		closeCh: make(chan struct{}),
+		closeCh: make(chan net.Listener),
 	}
 	curr, err := lr.maker(inner)
 	if err != nil {
@@ -41,12 +44,20 @@ func newListenerReloader(inner net.Listener, maker func(net.Listener) (net.Liste
 // whenever Accept is called. Then newCh takes in new listeners that might come
 // from Reload and makes them the new "current", so they'll be given out for
 // subsequent Accept calls
+//
+// closeCh is only read when closing, so we consistantly write to it until it
+// reads and then we know to shut down. Anything that was blocked on lch or
+// newCh will immediately be freed since we're closing those channels. closeCh
+// is closed as well to signal to Close that we're closed.
 func (lr *listenerReloader) spin(curr net.Listener) {
 	for {
 		select {
 		case lr.lch <- curr:
 		case curr = <-lr.newCh:
-		case <-lr.closeCh:
+		case lr.closeCh <- curr:
+			close(lr.lch)
+			close(lr.newCh)
+			close(lr.closeCh)
 			return
 		}
 	}
@@ -58,9 +69,15 @@ func (lr *listenerReloader) Accept() (net.Conn, error) {
 
 // Close only closes the wrapping net.Listener, it's assumed the underlying one
 // will be subsequently closed down the chain
+// In the event of http.Server.Shutdown, Close will be called by the defer in
+// Serve and the Shutdown function. So we detect if we're already closed and
+// return an error if we already are. This seems consistant with builtin.
 func (lr *listenerReloader) Close() error {
-	close(lr.closeCh)
-	return (<-lr.lch).Close()
+	l, ok := <-lr.closeCh
+	if !ok {
+		return errors.New("already closed")
+	}
+	return l.Close()
 }
 
 func (lr *listenerReloader) Addr() net.Addr {
@@ -77,6 +94,8 @@ func (lr *listenerReloader) Addr() net.Addr {
 // be interrupted and the next connection which comes in will still go to the
 // previous wrapping listener. All subsequent calls will get the new wrapping
 // listener.
+//
+// If we're already closed, this will panic.
 func (lr *listenerReloader) Reload() error {
 	newOuter, err := lr.maker(lr.inner)
 	if err != nil {

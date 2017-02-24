@@ -140,6 +140,11 @@ func (APIModeTest) Echo(r *http.Request, in, out *struct{ A int }) error {
 	out.A = in.A
 	return nil
 }
+func (APIModeTest) Sleep(r *http.Request, in, out *struct{ Time int }) error {
+	time.Sleep(time.Duration(in.Time) * time.Second)
+	out.Time = in.Time
+	return nil
+}
 
 // Basic test to make sure listening is sane and requests work
 func TestAPIMode(t *T) {
@@ -148,8 +153,6 @@ func TestAPIMode(t *T) {
 		Services:   []interface{}{APIModeTest{}},
 		InitDoneCh: make(chan bool),
 	}
-
-	os.Setenv("APIMODETEST_UNHEALTHY_TIMEOUT", "5000")
 
 	go func() { ga.APIMode() }()
 	<-ga.InitDoneCh
@@ -169,10 +172,41 @@ func TestAPIMode(t *T) {
 	require.Nil(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
+}
+
+func TestGracefulShutdown(t *T) {
+	ga := &GenAPI{
+		Name:       "apimodetest",
+		Services:   []interface{}{APIModeTest{}},
+		InitDoneCh: make(chan bool),
+	}
+
+	os.Setenv("APIMODETEST_UNHEALTHY_TIMEOUT", "3000")
+
+	go func() { ga.APIMode() }()
+	<-ga.InitDoneCh
+
+	assert.NotEmpty(t, ga.ListenAddr)
+	// ListenAddr is :port which doesn't have an IP so we just rip the port off
+	// and make the call on localhost
+	_, port, _ := net.SplitHostPort(ga.ListenAddr)
+
 	// We want to test that health-check shows as unhealthy after a sigint is received
 	ga.sigCh <- syscall.SIGINT
-	time.Sleep(3000 * time.Millisecond)
-	resp, err = http.Get("http://127.0.0.1:" + port + "/health-check")
+	time.Sleep(1000 * time.Millisecond)
+	resp, err := http.Get("http://127.0.0.1:" + port + "/health-check")
 	require.Nil(t, err)
 	assert.Equal(t, 500, resp.StatusCode)
+
+	// we should still be able to make a request, since it hasn't been 3 seconds
+	// sleep for 5 seconds since definitely
+	var args, res struct{ Time int }
+	args.Time = 5
+	err = rpcutil.JSONRPC2Call("http://127.0.0.1:"+port, &res, "APIModeTest.Sleep", &args)
+	require.Nil(t, err)
+	assert.Equal(t, 5, res.Time)
+
+	// now all the calls should fail
+	err = rpcutil.JSONRPC2Call("http://127.0.0.1:"+port, &res, "APIModeTest.Sleep", &args)
+	assert.NotNil(t, err)
 }
