@@ -236,6 +236,13 @@ type TLSInfo struct {
 	// SessionTicketKey leaks, previously recorded and future TLS connections
 	// using that key are compromised.
 	SessionTicketKey [32]byte
+
+	// If set then this config will be used for all tls listeners, regardless of
+	// all other factors.
+	//
+	// NOTE remember that you probably need to call BuildNameToCertificate on
+	// the Config you make
+	ForceTLSConfig *tls.Config
 }
 
 // GenAPI is a type used to handle most of the generic logic we always implement
@@ -587,11 +594,15 @@ func (g *GenAPI) serve(h http.Handler, addr string, doTLS bool) *listenerReloade
 
 	var tc *tls.Config
 	if doTLS {
-		// when srv.Serve is called, it checks to see if NextProtos contains
-		// "h2" and if so, it sets up *tls.Config to be http2-ready
-		tc = &tls.Config{
-			NextProtos:       []string{"h2", "http/1.1"},
-			SessionTicketKey: g.TLSInfo.SessionTicketKey,
+		if g.TLSInfo.ForceTLSConfig != nil {
+			tc = g.TLSInfo.ForceTLSConfig
+		} else {
+			// when srv.Serve is called, it checks to see if NextProtos contains
+			// "h2" and if so, it sets up *tls.Config to be http2-ready
+			tc = &tls.Config{
+				NextProtos:       []string{"h2", "http/1.1"},
+				SessionTicketKey: g.TLSInfo.SessionTicketKey,
+			}
 		}
 	}
 
@@ -619,17 +630,21 @@ func (g *GenAPI) listenerMaker(tc *tls.Config) func(net.Listener) (net.Listener,
 	return func(l net.Listener) (net.Listener, error) {
 		l = newProxyListener(l, g.privateCIDRs)
 		if tc != nil {
-			// BuildNameToCertificate creates the map and THEN loops over
-			// and adds to the map, this creates a race condition, so we use
-			// a copy and add it back to the pointer after
-			tcc := &tls.Config{
-				Certificates: g.TLSInfo.Certs,
+			// as a giant hack, we can force the tls.Config from outside GenAPI
+			// and ignore all the work and things we just did
+			if g.TLSInfo.ForceTLSConfig == nil {
+				// BuildNameToCertificate creates the map and THEN loops over
+				// and adds to the map, this creates a race condition, so we use
+				// a copy and add it back to the pointer after
+				tcc := &tls.Config{
+					Certificates: g.TLSInfo.Certs,
+				}
+				tcc.BuildNameToCertificate()
+				tc.Certificates = tcc.Certificates
+				tc.NameToCertificate = tcc.NameToCertificate
 			}
-			tcc.BuildNameToCertificate()
-			tc.Certificates = tcc.Certificates
-			tc.NameToCertificate = tcc.NameToCertificate
 			// use the same value for tc across listeners so we can keep session
-			// tickets ther same
+			// tickets the same
 			l = tls.NewListener(l, tc)
 		}
 		return l, nil
