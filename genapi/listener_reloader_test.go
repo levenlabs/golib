@@ -91,8 +91,11 @@ func TestListenerReloaderClose(t *T) {
 		ch <- lr.Close()
 	}()
 
-	// the non-error should always happen first since it'll cause the second
-	// close to immediately fail
-	assert.Nil(t, <-ch)
-	assert.NotNil(t, <-ch)
+	// since we don't know how long Close() takes on a listener, the ordering is
+	// unknown here, but one should be nil and one should not be
+	err1 := <-ch
+	err2 := <-ch
+	assert.NotEqual(t, err1, err2)
+	assert.True(t, err1 == nil || err2 == nil)
+	assert.True(t, err1 != nil || err2 != nil)
 }
