@@ -240,8 +240,9 @@ type TLSInfo struct {
 	// If set then this config will be used for all tls listeners, regardless of
 	// all other factors.
 	//
-	// NOTE remember that you probably need to call BuildNameToCertificate on
+	// NOTE: remember that you probably need to call BuildNameToCertificate on
 	// the Config you make
+	// NOTE2: you'll need to handle creation of SessionTicketKey yourself as well
 	ForceTLSConfig *tls.Config
 }
 
@@ -799,7 +800,7 @@ func (g *GenAPI) init() {
 	}
 
 	tlsAddrs, _ := g.ParamStrs("--tls-listen-addr")
-	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && len(tlsAddrs) > 0 {
+	if g.TLSInfo != nil && !g.TLSInfo.FillCertsManually && g.TLSInfo.ForceTLSConfig == nil && len(tlsAddrs) > 0 {
 		certFiles, _ := g.ParamStrs("--tls-cert-file")
 		keyFiles, _ := g.ParamStrs("--tls-key-file")
 		if len(certFiles) == 0 {
@@ -818,7 +819,7 @@ func (g *GenAPI) init() {
 			g.TLSInfo.Certs = append(g.TLSInfo.Certs, c)
 		}
 	}
-	if g.TLSInfo != nil {
+	if g.TLSInfo != nil && g.TLSInfo.ForceTLSConfig == nil {
 		key, _ := g.ParamStr("--tls-session-key")
 		if key != "" {
 			kb := []byte(key)
