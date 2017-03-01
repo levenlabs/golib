@@ -179,6 +179,21 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		dst.Header().Add("Trailer", strings.Join(trailerKeys, ", "))
 	}
 
+	var dstW io.WriteCloser
+	switch src.Header.Get("Content-Encoding") {
+	case "gzip":
+		dstW = gzip.NewWriter(dst)
+		dst.Header().Del("Content-Length")
+	case "deflate":
+		// From the docs: If level is in the range [-1, 9] then the error
+		// returned will be nil. Otherwise the error returned will be non-nil
+		// so we can ignore error
+		dstW, _ = flate.NewWriter(dst, -1)
+		dst.Header().Del("Content-Length")
+	default:
+		dstW = nopWriteCloser{dst} // defined in brw.go
+	}
+
 	dst.WriteHeader(src.StatusCode)
 	if len(src.Trailer) > 0 {
 		// Force chunking if we saw a response trailer.
@@ -187,19 +202,6 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		if fl, ok := dst.(http.Flusher); ok {
 			fl.Flush()
 		}
-	}
-
-	var dstW io.WriteCloser
-	switch src.Header.Get("Content-Encoding") {
-	case "gzip":
-		dstW = gzip.NewWriter(dst)
-	case "deflate":
-		// From the docs: If level is in the range [-1, 9] then the error
-		// returned will be nil. Otherwise the error returned will be non-nil
-		// so we can ignore error
-		dstW, _ = flate.NewWriter(dst, -1)
-	default:
-		dstW = nopWriteCloser{dst} // defined in brw.go
 	}
 
 	var err error
