@@ -3,6 +3,8 @@
 package proxyutil
 
 import (
+	"compress/flate"
+	"compress/gzip"
 	"encoding/gob"
 	"io"
 	"net/http"
@@ -140,7 +142,9 @@ func FilterEncodings(r *http.Request, encodings ...string) {
 	r.Header.Set("Accept-Encoding", strings.Join(newaep, ", "))
 }
 
-// WriteResponse writes the given response into the ResponseWriter
+// WriteResponse writes the given response into the ResponseWriter. It will
+// encode the Response's Body according to its Content-Encoding header, if it
+// has one.
 func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	copyHeader(dst.Header(), src.Header)
 
@@ -185,8 +189,31 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		}
 	}
 
-	_, err := io.Copy(dst, src.Body)
+	var dstW io.WriteCloser
+	switch src.Header.Get("Content-Encoding") {
+	case "gzip":
+		dstW = gzip.NewWriter(dst)
+	case "deflate":
+		// From the docs: If level is in the range [-1, 9] then the error
+		// returned will be nil. Otherwise the error returned will be non-nil
+		// so we can ignore error
+		dstW, _ = flate.NewWriter(dst, -1)
+	default:
+		dstW = nopWriteCloser{dst} // defined in brw.go
+	}
+
+	var err error
+	if _, err = io.Copy(dstW, src.Body); err != nil {
+		// bail, gotta close src.Body first though
+	} else if err = dstW.Close(); err != nil {
+		// bail, gotta close src.Body first though
+	}
+
 	src.Body.Close() // close now, instead of defer, to populate src.Trailer
+	if err != nil {
+		return err
+	}
+
 	copyHeader(dst.Header(), src.Trailer)
-	return err
+	return nil
 }
