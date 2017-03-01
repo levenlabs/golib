@@ -8,6 +8,7 @@ import (
 	. "testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteResponse(t *T) {
@@ -27,7 +28,8 @@ func TestWriteResponse(t *T) {
 	w.Header().Set("X-Hostname", "ivy")
 	w.Header().Set("Lorem", "ipsum")
 
-	WriteResponse(w, r)
+	err := WriteResponse(w, r)
+	require.Nil(t, err)
 	assert.Equal(t, b, w.Body.String())
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Equal(t, "ipsum", w.Header().Get("Lorem"))

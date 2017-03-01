@@ -141,7 +141,7 @@ func FilterEncodings(r *http.Request, encodings ...string) {
 }
 
 // WriteResponse writes the given response into the ResponseWriter
-func WriteResponse(dst http.ResponseWriter, src *http.Response) {
+func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	copyHeader(dst.Header(), src.Header)
 
 	// combine and de-dup side-by-side hosts
@@ -185,7 +185,8 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) {
 		}
 	}
 
-	io.Copy(dst, src.Body)
+	_, err := io.Copy(dst, src.Body)
 	src.Body.Close() // close now, instead of defer, to populate src.Trailer
 	copyHeader(dst.Header(), src.Trailer)
+	return err
 }
