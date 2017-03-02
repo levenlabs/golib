@@ -146,7 +146,13 @@ func FilterEncodings(r *http.Request, encodings ...string) {
 // encode the Response's Body according to its Content-Encoding header, if it
 // has one.
 func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
-	copyHeader(dst.Header(), src.Header)
+	head := http.Header{}
+	copyHeader(head, src.Header)
+	// remove any hop-by-hop headers we might've just set
+	for _, h := range hopHeaders {
+		head.Del(h)
+	}
+	copyHeader(dst.Header(), head)
 
 	// combine and de-dup side-by-side hosts
 	mh := map[string][]string(dst.Header())

@@ -19,6 +19,7 @@ func TestWriteResponse(t *T) {
 		Header: http.Header{
 			"X-Hostname": []string{"ivy", "quinn", "ivy"},
 			"Foo":        []string{"bar"},
+			"Connection": []string{"wazzup"},
 		},
 		Trailer: http.Header{
 			"Here": []string{"here"},
@@ -27,6 +28,7 @@ func TestWriteResponse(t *T) {
 	w := httptest.NewRecorder()
 	w.Header().Set("X-Hostname", "ivy")
 	w.Header().Set("Lorem", "ipsum")
+	w.Header().Set("Upgrade", "something")
 
 	err := WriteResponse(w, r)
 	require.Nil(t, err)
@@ -36,4 +38,6 @@ func TestWriteResponse(t *T) {
 	assert.Equal(t, "bar", w.Header().Get("Foo"))
 	assert.Equal(t, "ivy,quinn,ivy", w.Header().Get("X-Hostname"))
 	assert.Equal(t, "here", w.Header().Get("Here"))
+	assert.Equal(t, "something", w.Header().Get("Upgrade"))
+	assert.Equal(t, "", w.Header().Get("Connection"))
 }
