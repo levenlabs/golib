@@ -48,6 +48,24 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+// DisableCompression disables the built-in Transport's decompression.
+// It seems like the built-in decompression is only done when no
+// Accept-Encoding header was sent. If you want to remove uncertainty, call
+// this. If you're not reading the body at all, you should call this as an
+// optimization.
+// Additionally: https://github.com/golang/go/issues/18779
+// If you call this, you must call DecodeResponse, before reading the
+// response's body from Do().
+func (rp ReverseProxyClient) DisableCompression() {
+	// make sure a client is set, and if not, set it to default
+	if rp.Client == nil {
+		rp.Client = http.DefaultClient
+	}
+	if t, ok := rp.Client.Transport.(*http.Transport); ok {
+		t.DisableCompression = true
+	}
+}
+
 // TODO this is somewhat busterino. req is passed in with its URL changed, but
 // implicitly its RemoteAddr is still the original, and is then used to fill in
 // X-Forwarded-For. That's already hacky. In addition if we want to set
@@ -57,6 +75,10 @@ func copyHeader(dst, src http.Header) {
 // Do will perform the given request, which should have been taken in from an
 // http.Handler and is now being forwarded on with a new URL set. If the
 // request's context is cancelled then the request will be cancelled.
+//
+// If you expect an encoded (compressed) response, use DecodeResponse to decode
+// it before reading. If you're just piping this to WriteResponse, you don't
+// need DecodeResponse.
 func (rp ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
 	cl := rp.Client
 	if cl == nil {
@@ -186,17 +208,22 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	}
 
 	var dstW io.WriteCloser
-	switch src.Header.Get("Content-Encoding") {
-	case "gzip":
-		dstW = gzip.NewWriter(dst)
-		dst.Header().Del("Content-Length")
-	case "deflate":
-		// From the docs: If level is in the range [-1, 9] then the error
-		// returned will be nil. Otherwise the error returned will be non-nil
-		// so we can ignore error
-		dstW, _ = flate.NewWriter(dst, -1)
-		dst.Header().Del("Content-Length")
-	default:
+	// if the response is still compressed then don't try to re-compress it
+	if src.Uncompressed {
+		switch src.Header.Get("Content-Encoding") {
+		case "gzip":
+			dstW = gzip.NewWriter(dst)
+			dst.Header().Del("Content-Length")
+		case "deflate":
+			// From the docs: If level is in the range [-1, 9] then the error
+			// returned will be nil. Otherwise the error returned will be non-nil
+			// so we can ignore error
+			dstW, _ = flate.NewWriter(dst, -1)
+			dst.Header().Del("Content-Length")
+		}
+	}
+	// fallback to nop if we're not encoding anything
+	if dstW == nil {
 		dstW = nopWriteCloser{dst} // defined in brw.go
 	}
 
@@ -223,5 +250,55 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	}
 
 	copyHeader(dst.Header(), src.Trailer)
+	return nil
+}
+
+// readCloserComposition is a composition of ReadClosers, Read is always just
+// called on the first one, but close is propagated to all of them
+type readCloserComposition []io.ReadCloser
+
+// Read implements the io.Reader interface
+func (rs readCloserComposition) Read(p []byte) (int, error) {
+	return rs[0].Read(p)
+}
+
+// Close implements the io.Closer interface
+// it returns the last non-nil error received
+func (rs readCloserComposition) Close() error {
+	var err error
+	for i := range rs {
+		if e := rs[i].Close(); e != nil {
+			err = e
+		}
+	}
+	return err
+}
+
+// DecodeResponse takes a http.Response from Do() and replaces the body with an
+// uncompressed form. It also sets resp.Uncompressed to true. If the body is
+// already decompressed (because you didn't use Do()) then, this does nothing.
+func DecodeResponse(resp *http.Response) error {
+	if resp.Uncompressed {
+		return nil
+	}
+	var rc io.ReadCloser
+	var err error
+	switch resp.Header.Get("Content-Encoding") {
+	case "gzip":
+		rc, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			return err
+		}
+	case "deflate":
+		rc = flate.NewReader(resp.Body)
+	default:
+		return nil
+	}
+	// we need the Composition to propagate the close to both of them
+	resp.Body = readCloserComposition([]io.ReadCloser{
+		rc,
+		resp.Body,
+	})
+	resp.Uncompressed = true
 	return nil
 }
