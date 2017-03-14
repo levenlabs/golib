@@ -207,24 +207,26 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		dst.Header().Add("Trailer", strings.Join(trailerKeys, ", "))
 	}
 
-	var dstW io.WriteCloser
+	// don't close the writer unless we need to, otherwise we might be closing
+	// the writer before were completed with the ServeHTTP call, which causes
+	// race conditions with other assumptions like https://github.com/NYTimes/gziphandler/pull/37
+	var dstW io.Writer = dst
+	var closeDstW bool
 	// if the response is still compressed then don't try to re-compress it
 	if src.Uncompressed {
 		switch src.Header.Get("Content-Encoding") {
 		case "gzip":
 			dstW = gzip.NewWriter(dst)
 			dst.Header().Del("Content-Length")
+			closeDstW = true
 		case "deflate":
 			// From the docs: If level is in the range [-1, 9] then the error
 			// returned will be nil. Otherwise the error returned will be non-nil
 			// so we can ignore error
 			dstW, _ = flate.NewWriter(dst, -1)
 			dst.Header().Del("Content-Length")
+			closeDstW = true
 		}
-	}
-	// fallback to nop if we're not encoding anything
-	if dstW == nil {
-		dstW = nopWriteCloser{dst} // defined in brw.go
 	}
 
 	dst.WriteHeader(src.StatusCode)
@@ -237,13 +239,15 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		}
 	}
 
-	var err error
-	if _, err = io.Copy(dstW, src.Body); err != nil {
-		// bail, gotta close src.Body first though
-	} else if err = dstW.Close(); err != nil {
-		// bail, gotta close src.Body first though
+	_, err := io.Copy(dstW, src.Body)
+	// despite there being an error with the copy, we still need to close the
+	// writer to prevent leaks (the src.Body might've just been closed early
+	// because of client disconnect, but dstW still is intact/valid)
+	if closeDstW {
+		if wc, ok := dstW.(io.Closer); ok {
+			err = wc.Close()
+		}
 	}
-
 	src.Body.Close() // close now, instead of defer, to populate src.Trailer
 	if err != nil {
 		return err
