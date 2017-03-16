@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"encoding/gob"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 )
@@ -164,9 +165,25 @@ func FilterEncodings(r *http.Request, encodings ...string) {
 	r.Header.Set("Accept-Encoding", strings.Join(newaep, ", "))
 }
 
+// bodyAllowedForStatus reports whether a given response status code
+// permits a body. See RFC 2616, section 4.4.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == 204:
+		return false
+	case status == 304:
+		return false
+	}
+	return true
+}
+
 // WriteResponse writes the given response into the ResponseWriter. It will
 // encode the Response's Body according to its Content-Encoding header, if it
 // has one.
+// If you're writing the response to a HEAD or OPTIONS request, make sure that
+// ContentLength on the http.Response is 0 to prevent writing.
 func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	head := http.Header{}
 	copyHeader(head, src.Header)
@@ -213,7 +230,8 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	var dstW io.Writer = dst
 	var closeDstW bool
 	// if the response is still compressed then don't try to re-compress it
-	if src.Uncompressed {
+	// if there is no body then don't bother trying to compress anything
+	if src.Uncompressed && src.ContentLength != 0 {
 		switch src.Header.Get("Content-Encoding") {
 		case "gzip":
 			dstW = gzip.NewWriter(dst)
@@ -239,7 +257,12 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		}
 	}
 
-	_, err := io.Copy(dstW, src.Body)
+	var err error
+	if bodyAllowedForStatus(src.StatusCode) && src.ContentLength != 0 {
+		_, err = io.Copy(dstW, src.Body)
+	} else {
+		_, err = io.Copy(ioutil.Discard, src.Body)
+	}
 	// despite there being an error with the copy, we still need to close the
 	// writer to prevent leaks (the src.Body might've just been closed early
 	// because of client disconnect, but dstW still is intact/valid)
