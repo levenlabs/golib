@@ -57,10 +57,13 @@ func copyHeader(dst, src http.Header) {
 // Additionally: https://github.com/golang/go/issues/18779
 // If you call this, you must call DecodeResponse, before reading the
 // response's body from Do().
-func (rp ReverseProxyClient) DisableCompression() {
+func (rp *ReverseProxyClient) DisableCompression() {
 	// make sure a client is set, and if not, set it to default
 	if rp.Client == nil {
 		rp.Client = http.DefaultClient
+	}
+	if rp.Client.Transport == nil {
+		rp.Client.Transport = http.DefaultTransport
 	}
 	if t, ok := rp.Client.Transport.(*http.Transport); ok {
 		t.DisableCompression = true
@@ -80,11 +83,11 @@ func (rp ReverseProxyClient) DisableCompression() {
 // If you expect an encoded (compressed) response, use DecodeResponse to decode
 // it before reading. If you're just piping this to WriteResponse, you don't
 // need DecodeResponse.
-func (rp ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
-	cl := rp.Client
-	if cl == nil {
-		cl = http.DefaultClient
+func (rp *ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
+	if rp.Client == nil {
+		rp.Client = http.DefaultClient
 	}
+	cl := rp.Client
 
 	outreq := new(http.Request)
 	*outreq = *req // includes shallow copies of maps, but okay
@@ -116,6 +119,12 @@ func (rp ReverseProxyClient) Do(req *http.Request) (*http.Response, error) {
 	AddXForwardedFor(outreq, req)
 	// now clear the RemoteAddr
 	outreq.RemoteAddr = ""
+
+	// if we don't have a User-Agent header set then stdlib well default it to
+	// go-http-client/1.1, which we never really want
+	if _, ok := outreq.Header["User-Agent"]; !ok {
+		outreq.Header.Set("User-Agent", "")
+	}
 
 	res, err := cl.Do(outreq)
 	if err != nil {
@@ -229,16 +238,19 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	// race conditions with other assumptions like https://github.com/NYTimes/gziphandler/pull/37
 	var dstW io.Writer = dst
 	var closeDstW bool
+	// if we're not allowed to have a body for this status, then just discard
 	// if the response is still compressed then don't try to re-compress it
 	// if there is no body then don't bother trying to compress anything
-	if src.Uncompressed && src.ContentLength != 0 {
+	if !bodyAllowedForStatus(src.StatusCode) {
+		dstW = ioutil.Discard
+	} else if src.Uncompressed && src.ContentLength != 0 {
 		switch src.Header.Get("Content-Encoding") {
 		case "gzip":
 			dstW = gzip.NewWriter(dst)
 			dst.Header().Del("Content-Length")
 			closeDstW = true
 		case "deflate":
-			// From the docs: If level is in the range [-1, 9] then the error
+			// From the docs: If level is in the range [-2, 9] then the error
 			// returned will be nil. Otherwise the error returned will be non-nil
 			// so we can ignore error
 			dstW, _ = flate.NewWriter(dst, -1)
@@ -257,12 +269,7 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 		}
 	}
 
-	var err error
-	if bodyAllowedForStatus(src.StatusCode) && src.ContentLength != 0 {
-		_, err = io.Copy(dstW, src.Body)
-	} else {
-		_, err = io.Copy(ioutil.Discard, src.Body)
-	}
+	_, err := io.Copy(dstW, src.Body)
 	// despite there being an error with the copy, we still need to close the
 	// writer to prevent leaks (the src.Body might've just been closed early
 	// because of client disconnect, but dstW still is intact/valid)
