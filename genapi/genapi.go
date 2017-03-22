@@ -411,11 +411,12 @@ const (
 // HTTPDefaultClient returns a *http.Client with sane defaults that can be
 // overridden on a case-by-case basis if you can't use http.DefaultClient
 func HTTPDefaultClient() *http.Client {
-	// based on defaults in 1.7
+	// based on defaults in 1.8 minus ProxyFromEnvironment and adjusted max conns
 	return &http.Client{Transport: &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
+			DualStack: true,
 		}).DialContext,
 		MaxIdleConnsPerHost: 100,
 		// even though this is high, we should keep some number that isn't
