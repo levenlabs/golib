@@ -46,7 +46,9 @@ func TestDo(t *T) {
 		Handler: handler,
 	}
 	go srv.Serve(ln)
-	rpc := ReverseProxyClient{}
+	rpc := ReverseProxyClient{
+		Client: &http.Client{Transport: &http.Transport{}},
+	}
 
 	r := httptest.NewRequest("GET", "http://"+ln.Addr().String()+"/", nil)
 	r.Header.Set("User-Agent", ua)
@@ -68,6 +70,9 @@ func TestDo(t *T) {
 	assert.True(t, resp.Uncompressed)
 
 	rpc.DisableCompression()
+	// make sure that the default transport pointer isn't modified
+	dt := http.DefaultTransport.(*http.Transport)
+	assert.False(t, dt.DisableCompression)
 	r = httptest.NewRequest("GET", "http://"+ln.Addr().String()+"/gzip", nil)
 	resp, err = rpc.Do(r)
 	require.Nil(t, err)

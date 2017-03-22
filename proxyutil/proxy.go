@@ -54,6 +54,9 @@ func copyHeader(dst, src http.Header) {
 // Accept-Encoding header was sent. If you want to remove uncertainty, call
 // this. If you're not reading the body at all, you should call this as an
 // optimization.
+// Note: This will change the DisableCompression value on the Transport, which
+// if you didn't pass any, is the DefaultTransport, which will affect more than
+// just requests sent through this client. Use genapi.HTTPDefaultClient instead
 // Additionally: https://github.com/golang/go/issues/18779
 // If you call this, you must call DecodeResponse, before reading the
 // response's body from Do().
