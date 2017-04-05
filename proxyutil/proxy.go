@@ -246,19 +246,24 @@ func WriteResponse(dst http.ResponseWriter, src *http.Response) error {
 	// if there is no body then don't bother trying to compress anything
 	if !bodyAllowedForStatus(src.StatusCode) {
 		dstW = ioutil.Discard
-	} else if src.Uncompressed && src.ContentLength != 0 {
-		switch src.Header.Get("Content-Encoding") {
-		case "gzip":
-			dstW = gzip.NewWriter(dst)
-			dst.Header().Del("Content-Length")
-			closeDstW = true
-		case "deflate":
-			// From the docs: If level is in the range [-2, 9] then the error
-			// returned will be nil. Otherwise the error returned will be non-nil
-			// so we can ignore error
-			dstW, _ = flate.NewWriter(dst, -1)
-			dst.Header().Del("Content-Length")
-			closeDstW = true
+	} else if src.Uncompressed {
+		// since we don't have any content, make sure that encoding is cleared
+		if src.ContentLength == 0 {
+			dst.Header().Del("Content-Encoding")
+		} else {
+			switch src.Header.Get("Content-Encoding") {
+			case "gzip":
+				dstW = gzip.NewWriter(dst)
+				dst.Header().Del("Content-Length")
+				closeDstW = true
+			case "deflate":
+				// From the docs: If level is in the range [-2, 9] then the error
+				// returned will be nil. Otherwise the error returned will be non-nil
+				// so we can ignore error
+				dstW, _ = flate.NewWriter(dst, -1)
+				dst.Header().Del("Content-Length")
+				closeDstW = true
+			}
 		}
 	}
 

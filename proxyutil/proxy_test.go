@@ -201,6 +201,29 @@ func TestWriteResponseCompressed(t *T) {
 		assert.Equal(t, encb, w.Body.Bytes())
 		assert.True(t, body.Closed)
 		assert.False(t, wc.Closed)
+
+		// if it has a 0 content-length, don't do anything
+		// this isn't really a realistic test except for replaying a pcap/har
+		body = &storedCloser{bytes.NewBufferString(""), false}
+		r = &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header: http.Header{
+				"Content-Encoding": []string{enc},
+				"Content-Length":   []string{"0"},
+			},
+			Uncompressed:  true,
+			ContentLength: 0,
+		}
+		w = httptest.NewRecorder()
+		wc = &storedCloseWriter{w, false}
+		err = WriteResponse(wc, r)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Header().Get("Content-Encoding"))
+		assert.Equal(t, "0", w.Header().Get("Content-Length"))
+		assert.Empty(t, w.Body.Bytes())
+		assert.True(t, body.Closed)
+		assert.False(t, wc.Closed)
 	}
 }
 
