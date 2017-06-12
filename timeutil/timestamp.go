@@ -1,6 +1,7 @@
 package timeutil
 
 import (
+	"bytes"
 	"strconv"
 	"time"
 
@@ -35,15 +36,26 @@ func (t Timestamp) String() string {
 // MarshalJSON returns the JSON representation of the Timestamp as an integer.
 // It never returns an error
 func (t Timestamp) MarshalJSON() ([]byte, error) {
+	// TODO if IsZero() (as opposed to IsUnixZero()) then marshal as null
+	// instead of 0
 	ts := timeToFloat(t.Time)
 	stamp := strconv.FormatFloat(ts, 'f', -1, 64)
 
 	return []byte(stamp), nil
 }
 
+var jsonNull = []byte("null")
+
 // UnmarshalJSON takes a JSON integer and converts it into a Timestamp, or
 // returns an error if this can't be done
 func (t *Timestamp) UnmarshalJSON(b []byte) error {
+	// since 0 is a valid timestamp we can't use that to mean "unset", so we
+	// take null to mean unset instead
+	if bytes.Equal(b, jsonNull) {
+		t.Time = time.Time{}
+		return nil
+	}
+
 	ts, err := strconv.ParseFloat(string(b), 64)
 	if err != nil {
 		return err
