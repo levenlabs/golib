@@ -60,18 +60,27 @@ func TestTimestampJSON(t *T) {
 }
 
 func TestTSJSONNull(t *T) {
-	// TODO test that marshaling empty foo marshals into timestamp:null
 	{
 		var foo Foo
-		require.Nil(t, json.Unmarshal([]byte(`{"timestamp":null}`), &foo))
+		timestampNull := []byte(`{"timestamp":null}`)
+		fooJSON, err := json.Marshal(foo)
+		require.Nil(t, err)
+		assert.Equal(t, timestampNull, fooJSON)
+
+		require.Nil(t, json.Unmarshal(timestampNull, &foo))
 		assert.True(t, foo.T.IsZero())
 		assert.False(t, foo.T.IsUnixZero())
 	}
 
-	// TODO test that marshaling foo with unix 0 marshals into timestamp:0
 	{
 		var foo Foo
-		require.Nil(t, json.Unmarshal([]byte(`{"timestamp":0}`), &foo))
+		foo.T = Timestamp{Time: unixZero}
+		timestampZero := []byte(`{"timestamp":0}`)
+		fooJSON, err := json.Marshal(foo)
+		require.Nil(t, err)
+		assert.Equal(t, timestampZero, fooJSON)
+
+		require.Nil(t, json.Unmarshal(timestampZero, &foo))
 		assert.False(t, foo.T.IsZero())
 		assert.True(t, foo.T.IsUnixZero())
 	}
